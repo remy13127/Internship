@@ -2,9 +2,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
+from lmfit import Model,Parameter,Parameters
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MultipleLocator
 from scipy.stats import norm
+import random
 
 def MSD_tracks(data,min_length,max_length):
 	tracklist = data.TRACK_ID.unique()
@@ -626,3 +628,90 @@ def cutoff_function(dt,N,data,timelag,mmsd,mvar):
 def msd(t, D, alpha):
 	"""2D MSD: 4*D*t**alpha"""
 	return(4*D*t**alpha)
+
+def data_pool(files,dt,minframe,maxframe,rsquared_threshold):
+
+	minalpha = 1.0E-03
+	minD = 1.0E-04
+	maxD = 4
+	maxalpha = 3
+
+	msd_model = Model(msd)
+	params = Parameters()
+	params['alpha']   = Parameter(name='alpha', value=1.0, min=minalpha,max=maxalpha)
+	params['D']   = Parameter(name='D', value=0.1, min=minD,max=maxD)
+
+	DATA = []
+	for filename in files:
+
+		data = pd.read_csv(filename) 
+		tracklist = data.TRACK_ID.unique()  #list of track ID in data
+
+		for tid in tracklist:
+
+			trackid = data["TRACK_ID"] == tid
+			x = data[trackid]["POSITION_X"].to_numpy()   #x associated to track 'tid'
+			y = data[trackid]["POSITION_Y"].to_numpy()   #y associated to track 'tid'
+
+			rhon = []
+			if len(x)<maxframe and len(x)>minframe:
+				for n in range(1,len(x)):             #for each n = each time lag
+					s = 0
+					for i in range(0,len(x)-n):
+						s+=(x[n+i] - x[i])**2 + (y[n+i] - y[i])**2
+					rhon.append(1/(len(x)-n)*s)
+
+				N = len(rhon)+1
+				t = [n*dt for n in np.linspace(1,N-1,N-1)]
+
+				nbrpts = int(0.3*N)
+				result = msd_model.fit(rhon[:nbrpts+1], params, t=t[:nbrpts+1])
+			    
+				s=0
+				for p in range(0,len(x)-1):
+					s+= np.sqrt((x[p+1]-x[p])**2+(y[p+1]-y[p])**2)
+				confinement_ratio = np.sqrt((x[-1]-x[0])**2+(y[-1]-y[0])**2)/s
+
+				alpha = result.params['alpha'].value
+				D = result.params['D'].value
+				rsquare = 1 - result.residual.var() / np.var(rhon[:nbrpts+1])
+
+				if rsquare > rsquared_threshold and confinement_ratio!=0.0:
+					feat = [alpha,D,confinement_ratio,len(x),tid,x,y]
+					DATA.append(feat)
+	return(DATA)
+
+def two_distributions_plot(dist1,dist2,label1,label2):
+	fig = plt.figure(figsize=(16, 4))
+	grid = plt.GridSpec(1, 3, hspace=0.4, wspace=0.5)
+	dist = fig.add_subplot(grid[0,0])
+	logdist = fig.add_subplot(grid[0,1])
+	cdf = fig.add_subplot(grid[0,2])
+	   
+	dist.hist(dist1,bins=100,alpha=0.5,label=label1)
+	dist.hist(dist2,bins=100,alpha=0.5,label=label2)
+	dist.set_xlabel('D')
+	dist.set_ylabel('#')
+	dist.legend()
+
+	cdf.hist(dist1,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label1)
+	cdf.hist(dist2,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label2)
+	cdf.set_xscale('log')
+	cdf.set_xlabel('D')
+	cdf.set_ylabel('Cumulative distribution function')
+	cdf.legend()
+
+	def plot_loghist(x, bins,labels):
+		hist, bins = np.histogram(x, bins=bins)
+		logbins = np.logspace(np.log10(bins[0]),np.log10(bins[-1]),len(bins))
+		logdist.hist(x, bins=logbins,label=labels,alpha=0.5)
+		logdist.set_xscale('log')
+
+	plot_loghist(dist1, 100,label1)
+	plot_loghist(dist2,100,label2)
+	logdist.legend()
+	plt.show()
+
+def partition(list_in, n):
+	random.shuffle(list_in)
+	return([list_in[i::n] for i in range(n)])
