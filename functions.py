@@ -1,12 +1,15 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from sklearn.linear_model import LinearRegression
 from lmfit import Model,Parameter,Parameters
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MultipleLocator
-from scipy.stats import norm
+from scipy.stats import norm, ks_2samp
 import random
+import mahotas as mh
+
 
 def MSD_tracks(data,min_length,max_length):
 	tracklist = data.TRACK_ID.unique()
@@ -626,10 +629,29 @@ def cutoff_function(dt,N,data,timelag,mmsd,mvar):
 	return(data,timelag,mmsd,mvar,cutoff)
 
 def msd(t, D, alpha):
-	"""2D MSD: 4*D*t**alpha"""
+	"""
+	Parameters:
+	D<float>: diffusion coefficient
+	alpha<float>: power exponent
+	
+	Returns:
+	4*D*t^alpha
+	"""
 	return(4*D*t**alpha)
 
-def data_pool(files,dt,minframe,maxframe,rsquared_threshold):
+def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8):
+	"""
+	This function extracts trajectories from CSV files, computes the MSD curves. The MSD curves are fitted according to a 4*D*t^alpha power law, where D is the diffusion coefficient. The fit parameters are stored in the DATA list if R² > rsquared_threshold. DATA contains for each surviving track the power exponent alpha, the diffusion coefficient D, the confinement ratio c, the tracklength, the track ID, the x sequence of coordinates, the y sequence of coordinates. 
+	
+	Parameters:
+	files<list of str>: list of csv filenames which will be analyzed.
+	dt<float>: time interval bewteen two frames.
+	minframe(default=5),maxframe(default=500)<int>: minimum (and maximum) number of frames in order to keep a track and perform the analysis. 
+	rsquared_threshold(default=0.8)<float>: threshold on the accurateness of the fit. 
+	
+	Returns:
+	DATA<list>: contains [alpha<float>,D<float>,confinement ratio<float>,number of frames<int>,track ID,x<ndarray>,y<ndarray>] for each retained trajectory. 
+	"""
 
 	minalpha = 1.0E-03
 	minD = 1.0E-04
@@ -681,37 +703,219 @@ def data_pool(files,dt,minframe,maxframe,rsquared_threshold):
 					DATA.append(feat)
 	return(DATA)
 
-def two_distributions_plot(dist1,dist2,label1,label2):
+def two_distributions_plot(DATA1,DATA2,label1,label2):
 	fig = plt.figure(figsize=(16, 4))
-	grid = plt.GridSpec(1, 3, hspace=0.4, wspace=0.5)
-	dist = fig.add_subplot(grid[0,0])
-	logdist = fig.add_subplot(grid[0,1])
-	cdf = fig.add_subplot(grid[0,2])
+	grid = plt.GridSpec(2, 5, hspace=0.4, wspace=0.5)
+	Dvsalpha = fig.add_subplot(grid[:,0:2])
+	distD = fig.add_subplot(grid[0,2])
+	logdistD = fig.add_subplot(grid[0,3])
+	cdfD = fig.add_subplot(grid[0,4])
+	distA = fig.add_subplot(grid[1,2])
+	logdistA = fig.add_subplot(grid[1,3])
+	cdfA = fig.add_subplot(grid[1,4])
+	
+	D1 = []
+	A1 = []
+	for k in range(np.shape(DATA1)[0]):
+		D1.append(DATA1[k][1])
+		A1.append(DATA1[k][0])
+    
+	D2 = []
+	A2 = []
+	for k in range(np.shape(DATA2)[0]):
+		D2.append(DATA2[k][1])
+		A2.append(DATA2[k][0])
+		
+	Dvsalpha.scatter(A1,D1,label=label1,alpha=0.5)
+	Dvsalpha.scatter(A2,D2,label=label2,alpha=0.5)
+	Dvsalpha.set_ylim(min(D1+D2),max(D1+D2))
+	Dvsalpha.set_yscale('log')
+	Dvsalpha.set_xlabel(r'$\alpha$')
+	Dvsalpha.set_ylabel('D')
+	Dvsalpha.spines["top"].set_visible(False)  
+	Dvsalpha.spines["right"].set_visible(False)
+	Dvsalpha.legend()
 	   
-	dist.hist(dist1,bins=100,alpha=0.5,label=label1)
-	dist.hist(dist2,bins=100,alpha=0.5,label=label2)
-	dist.set_xlabel('D')
-	dist.set_ylabel('#')
-	dist.legend()
+	distD.hist(D1,bins=30,alpha=0.5,label=label1)
+	distD.hist(D2,bins=30,alpha=0.5,label=label2)
+	distD.set_xlabel('D')
+	distD.set_ylabel('#')
+	#distD.legend(fontsize='small')
+	distD.spines["top"].set_visible(False)  
+	distD.spines["right"].set_visible(False)
+	
+	distA.hist(A1,bins=30,alpha=0.5,label=label1)
+	distA.hist(A2,bins=30,alpha=0.5,label=label2)
+	distA.set_xlabel(r'$\alpha$')
+	distA.set_ylabel('#')
+	#distA.legend(fontsize='small')
+	distA.spines["top"].set_visible(False)  
+	distA.spines["right"].set_visible(False)	
 
-	cdf.hist(dist1,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label1)
-	cdf.hist(dist2,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label2)
-	cdf.set_xscale('log')
-	cdf.set_xlabel('D')
-	cdf.set_ylabel('Cumulative distribution function')
-	cdf.legend()
+	cdfD.hist(D1,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label1)
+	cdfD.hist(D2,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label2)
+	cdfD.set_xscale('log')
+	cdfD.set_xlabel('D')
+	cdfD.set_ylabel('CDF')
+	#cdfD.legend(fontsize='small')
+	cdfD.spines["top"].set_visible(False)  
+	cdfD.spines["right"].set_visible(False)
+	
+	cdfA.hist(A1,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label1)
+	cdfA.hist(A2,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label2)
+	cdfA.set_xscale('log')
+	cdfA.set_xlabel(r'$\alpha$')
+	cdfA.set_ylabel('CDF')
+	#cdfA.legend(fontsize='small')
+	cdfA.spines["top"].set_visible(False)  
+	cdfA.spines["right"].set_visible(False)
 
-	def plot_loghist(x, bins,labels):
+	def logbin(x, bins):
 		hist, bins = np.histogram(x, bins=bins)
 		logbins = np.logspace(np.log10(bins[0]),np.log10(bins[-1]),len(bins))
-		logdist.hist(x, bins=logbins,label=labels,alpha=0.5)
-		logdist.set_xscale('log')
-
-	plot_loghist(dist1, 100,label1)
-	plot_loghist(dist2,100,label2)
-	logdist.legend()
+		return(logbins)
+	
+	
+	logdistD.hist(D1, bins=logbin(D1,30),label=label1,alpha=0.5)
+	logdistD.hist(D2, bins=logbin(D2,30),label=label2,alpha=0.5)
+	logdistD.set_xscale('log')
+	logdistD.set_xlabel('D')
+	logdistD.set_ylabel('#')
+	#logdistD.legend(fontsize='small')
+	logdistD.spines["top"].set_visible(False)  
+	logdistD.spines["right"].set_visible(False)
+	
+	logdistA.hist(A1, bins=logbin(A1,30),label=label1,alpha=0.5)
+	logdistA.hist(A2, bins=logbin(A2,30),label=label2,alpha=0.5)
+	logdistA.set_xscale('log')
+	logdistA.set_xlabel(r'$\alpha$')
+	logdistA.set_ylabel('#')
+	#logdistA.legend(fontsize='small')
+	logdistA.spines["top"].set_visible(False)  
+	logdistA.spines["right"].set_visible(False)
+	
+	#plt.tight_layout()
 	plt.show()
 
+def compute_mean_intensity_map(filename,gauss=5,plot=False):
+	"""
+	This function takes an image, applies a gaussian filter. Then it labels individual objects detected after a segmentation step. For each object thus labeled, the function averages over the area the original pixel intensity.
+	
+	Parameters:
+	filename<str>: path of the image file.
+	gauss<float>(default=5): standard deviation for the gaussian filter.
+	plot<bool>(delfaut=False): option to show the segmented mean intensity image.
+	
+	Returns:
+	mean_intensity_map<ndarray>: matrix of the mean pixel intensity per segmented object
+	"""
+	image = mh.imread(filename)
+	imagef = mh.gaussian_filter(image,gauss)
+	imagef = imagef.astype('uint8')
+	T = mh.thresholding.otsu(imagef)
+	labeled,nr_objects = mh.label(imagef > T)
+    
+	cell_index = np.unique(labeled)
+	mean_intensity_map = np.zeros_like(image)
+
+	for lab in cell_index:
+		s=0
+		n=0
+		for i in range(np.shape(image)[0]):
+			for j in range(np.shape(image)[1]):
+				if labeled[i,j]==lab:
+					s+=image[i,j]
+					n+=1
+		meanI = s/n
+		for i in range(np.shape(image)[0]):
+			for j in range(np.shape(image)[1]):
+				if labeled[i,j]==lab:
+					mean_intensity_map[i,j]=meanI
+	if plot==True:
+		plt.imshow(mean_intensity_map)
+		plt.colorbar()
+		plt.title('Mean pixel intensity over each cell')
+		plt.show()
+	return(mean_intensity_map)
+
+
 def partition(list_in, n):
+	"""
+	This function randomly shuffles a list and makes n partitions.
+	
+	Parameters:
+	<list or ndarray>list_in: list
+	n<int>: number of partitions 
+	
+	Returns:
+	<list> of shape (n,len(list_in/n)) -> element [0] is the first partition and so on.
+	"""
 	random.shuffle(list_in)
 	return([list_in[i::n] for i in range(n)])
+
+def ecdf(data):
+	"""
+	This function computes the empirical cumulative distribution function for a set of data. 
+	Parameters:
+	data<ndarray>: list of values
+	Returns:
+	x_values<ndarray>: bins coordinates for the ECDF
+	y_values<ndarray>: ECDF values
+	"""
+	# create a sorted series of unique data
+	cdfx = np.sort(np.unique(data))
+	# x-data for the ECDF: evenly spaced sequence of the uniques
+	x_values = np.linspace(start=min(cdfx),stop=max(cdfx),num=len(cdfx))
+	# size of the x_values
+	size_data = data.size
+	# y-data for the ECDF:
+	y_values = []
+	for i in x_values:
+		# all the values in raw data less than the ith value in x_values
+		temp = data[data <= i]
+		# fraction of that value with respect to the size of the x_values
+		value = temp.size / size_data
+		# pushing the value in the y_values
+		y_values.append(value)
+	# return both x and y values    
+	return(x_values,y_values)
+
+
+
+def kolmogorov_smirnov(dist1,dist2,nloop=1000,plot=False):
+	"""
+	This function computes the KS statistic D and associated p-value between two samples. D is defined as the maximum distance separating the ECDF of each sample. The inital assumption is that both samples were drawn from the same distribution. A p-value under 1 % suggests that the original samples were probably drawn from different distributions.
+
+	Parameters:
+	dist1,dist2<list or ndarray>: lists of values.
+	nloop<int>(default=1000): number of iterations to compute the KS statistic distribution. 
+	plot<bool>(default=False): plot the KS statistic distribution and initial D.
+	Returns: 
+	stat0,pvalue<float>: KS statistic, p-value.
+	
+	"""
+	stat0,pvalue0 = ks_2samp(dist1,dist2)
+	print("KS statistic = ",stat0)
+	size1,size2 = len(dist1),len(dist2)
+	conc = dist1+dist2
+	s=0
+	stat_array = []
+	for i in range(nloop):
+		shuffled1 = partition(conc,1)[0]
+		shuffled2 = partition(conc,1)[0]
+		dist1 = shuffled1[0:size1]
+		dist2 = shuffled2[0:size2]
+		stat,pval = ks_2samp(dist1,dist2)
+		stat_array.append(stat)
+		if stat>=stat0:
+			s+=1
+	pvalue = s/nloop
+	print("bootstrap p-value = ",pvalue)
+	if plot==True:
+		hist,bin_edge = np.histogram(stat_array,bins=10)
+		plt.hist(stat_array,bins=10)
+		plt.vlines(stat0,0,max(hist),color='r')
+		plt.xlabel(r'KS statistic $D^*$')
+		plt.title('Statistical distribution for the K-S statistic')
+		plt.show()
+	return(stat0,pvalue)
