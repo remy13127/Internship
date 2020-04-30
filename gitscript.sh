@@ -1,4 +1,3 @@
-git add *
-git add -u .
-git commit -m *
-git push origin master
+git init
+git commit -m "update"
+git push -u origin master

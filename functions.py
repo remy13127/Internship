@@ -459,7 +459,7 @@ def plot_preprocessed_dist(processed_feat,feat):
 
 	dist_D.hist(processed_feat[:,1],bins=10)
 	dist_D.hist(feat[:,1],bins=10,color='r', ec='r',alpha=0.5)
-	dist_D.set_xlabel(r'$D$')
+	dist_D.set_xlabel(r'$D$ ($\mu$m$^2/$s)')
 	dist_D.set_ylabel('#')
 	dist_D.spines["top"].set_visible(False)  
 	dist_D.spines["right"].set_visible(False)
@@ -490,7 +490,7 @@ def plot_preprocessed_dist(processed_feat,feat):
 	darray = np.sort(np.array(feat[:,1]))
 	Darray = darray[darray > 1.0E-07]
 	n, bins, patches = cdf_d.hist(Darray, 10000, density=True, histtype='step',cumulative=True, label='Empirical')
-	cdf_d.set_xlabel(r'$D$')
+	cdf_d.set_xlabel(r'$D$ ($\mu$m$^2/$s)')
 	cdf_d.set_ylabel('Cumulative distribution function')
 	cdf_d.spines["top"].set_visible(False)  
 	cdf_d.spines["right"].set_visible(False)
@@ -519,6 +519,7 @@ def plot_track_characteristics(dt,feat,msd_all,nbr_frames,color_array,minframe,m
 	trajectories = fig.add_subplot(gs[0,6])
 
 	ax_joint.scatter(alpha,diff,c=color_array)
+	ax_joint.set_title('Fit parameters for each MSD curve\n and distributions projected on each axis')
 	#ax_joint.set_yscale('log')
 	#ax_joint.text(max(alpha)/50,max(diff)/2,"Mean D = "+str(np.mean(diff)))
 	#ax_joint.text(max(alpha)/50,max(diff)/2.3,r"Mean $\alpha$ = "+str(np.mean(alpha)))
@@ -538,7 +539,7 @@ def plot_track_characteristics(dt,feat,msd_all,nbr_frames,color_array,minframe,m
 	plt.setp(ax_marg_y.get_yticklabels(), visible=True)
 
 	# Set labels on joint
-	ax_joint.set_ylabel(r'$D$')
+	ax_joint.set_ylabel(r'$D$ ($\mu$m$^2/$s)')
 	ax_joint.set_xlabel(r'$\alpha$')
 	ax_joint.spines["top"].set_visible(False)  
 	ax_joint.spines["right"].set_visible(False)
@@ -558,7 +559,7 @@ def plot_track_characteristics(dt,feat,msd_all,nbr_frames,color_array,minframe,m
 	    msd_plot.plot(t,msd_all[k][:],c=color_array[k])
 	    
 	    
-	msd_plot.set_ylabel(r"Mean square displacement ($\mu$m$^2/$s)")    
+	msd_plot.set_ylabel(r"Mean square displacement ($\mu$m$^2$)")    
 	msd_plot.set_xlabel("Time lag (s)")
 	msd_plot.spines["top"].set_visible(False)  
 	msd_plot.spines["right"].set_visible(False)
@@ -566,19 +567,20 @@ def plot_track_characteristics(dt,feat,msd_all,nbr_frames,color_array,minframe,m
 	msd_plot.get_yaxis().tick_left()
 	msd_plot.set_yscale('log')
 	msd_plot.set_xscale('log')
+	msd_plot.set_title('Mean square displacement curves for all trajectories')
 	plt.xticks(fontsize=10)  
 	plt.yticks(fontsize=10)
 
 
 	#Hist frames
-
+	histo_frame,bin_edge= np.histogram(nbr_frames,bins=100)
 	hist_frame.hist(nbr_frames,bins=100,range=(0, 100))
 	hist_frame.axvline(x=maxframe, ymin=0, ymax=1,linestyle="--",color="red")
 	hist_frame.axvline(x=minframe, ymin=0, ymax=1,linestyle="--",color="red")
 	hist_frame.set_xlabel('N frames')
 	hist_frame.set_ylabel('#')
-	hist_frame.text(50,300,'Minimum number of frames = '+str(minframe))
-	hist_frame.text(50,250,'Maximum number of frames = '+str(maxframe))
+	hist_frame.text(50,max(histo_frame)/4,'Minimum number of frames = '+str(minframe))
+	hist_frame.text(50,max(histo_frame)/2,'Maximum number of frames = '+str(maxframe))
 	hist_frame.spines["top"].set_visible(False)  
 	hist_frame.spines["right"].set_visible(False)
 	hist_frame.get_xaxis().tick_bottom()  
@@ -596,10 +598,23 @@ def plot_track_characteristics(dt,feat,msd_all,nbr_frames,color_array,minframe,m
 	trajectories.set_yticks([])
 	
 	plt.subplots_adjust(wspace=0.8)
+	plt.tight_layout()
 	#plt.savefig(output_folder+"/data_characteristics.png")
 	plt.show()
 
 def mmsd_plot(timelag,mmsd,mvar):
+	"""
+	This function plots the ensemble mean for the mean square displacement, its associated experimental variance. 
+	
+	Parameters:
+	timelag<ndarray>: n values for (n*\Delta t), in order to select cutoff
+	mmsd<ndarray>: ensemble mean MSD
+	mvar<ndarray>: associated experimental variance
+	
+	Return:
+	MMSD plot.
+	
+	"""
 	plt.figure(figsize=(8, 6))
 	ax = plt.subplot(111)  
 	ax.spines["top"].set_visible(False)  
@@ -611,7 +626,7 @@ def mmsd_plot(timelag,mmsd,mvar):
 	plt.yticks(fontsize=14)
 	plt.fill_between(timelag,[a - np.sqrt(b) for a,b in zip(mmsd,mvar)],[a + np.sqrt(b) for a,b in zip(mmsd,mvar)], color="#3F5D7D") 
 	plt.plot(timelag,mmsd,color="white", lw=2)
-	plt.ylabel(r"Mean square displacement ($\mu$m$^2/$s)",fontsize=16)
+	plt.ylabel(r"Mean square displacement ($\mu$m$^2$)",fontsize=16)
 	plt.xlabel('Time Lag (n)',fontsize=16)
 	plt.show()
 
@@ -639,7 +654,7 @@ def msd(t, D, alpha):
 	"""
 	return(4*D*t**alpha)
 
-def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8):
+def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,fit_option="thirty_percent"):
 	"""
 	This function extracts trajectories from CSV files, computes the MSD curves. The MSD curves are fitted according to a 4*D*t^alpha power law, where D is the diffusion coefficient. The fit parameters are stored in the DATA list if R² > rsquared_threshold. DATA contains for each surviving track the power exponent alpha, the diffusion coefficient D, the confinement ratio c, the tracklength, the track ID, the x sequence of coordinates, the y sequence of coordinates. 
 	
@@ -648,6 +663,7 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8):
 	dt<float>: time interval bewteen two frames.
 	minframe(default=5),maxframe(default=500)<int>: minimum (and maximum) number of frames in order to keep a track and perform the analysis. 
 	rsquared_threshold(default=0.8)<float>: threshold on the accurateness of the fit. 
+	fit_option(default="thirty_percent")<str>: perform the MSD fit over 30 % of the available points ("thirty_percent") or 3 points ("3_points").
 	
 	Returns:
 	DATA<list>: contains [alpha<float>,D<float>,confinement ratio<float>,number of frames<int>,track ID,x<ndarray>,y<ndarray>] for each retained trajectory. 
@@ -685,25 +701,55 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8):
 
 				N = len(rhon)+1
 				t = [n*dt for n in np.linspace(1,N-1,N-1)]
-
-				nbrpts = int(0.3*N)
+				
+				if fit_option=="thirty_percent":
+					nbrpts = int(0.3*N)
+				elif fit_option=="3_points":
+					nbrpts = 3
+				
 				result = msd_model.fit(rhon[:nbrpts+1], params, t=t[:nbrpts+1])
 			    
-				s=0
-				for p in range(0,len(x)-1):
-					s+= np.sqrt((x[p+1]-x[p])**2+(y[p+1]-y[p])**2)
-				confinement_ratio = np.sqrt((x[-1]-x[0])**2+(y[-1]-y[0])**2)/s
+				confinement = confinement_ratio(x,y)
 
 				alpha = result.params['alpha'].value
 				D = result.params['D'].value
 				rsquare = 1 - result.residual.var() / np.var(rhon[:nbrpts+1])
 
 				if rsquare > rsquared_threshold and confinement_ratio!=0.0:
-					feat = [alpha,D,confinement_ratio,len(x),tid,x,y]
+					feat = [alpha,D,confinement,len(x),tid,x,y]
 					DATA.append(feat)
 	return(DATA)
 
+def confinement_ratio(x,y):
+	"""
+	This function takes x, y trajectories and computes the end-to-end distance divided by the total displacement of a molecule. This ratio is called the confinement ratio. If it goes to zero then the molecule is probably confined. 
+	
+	Parameters:
+	x,y<list or ndarray> x, y trajectories
+	
+	Return:
+	c<float>: the confinement ratio, a value between 0.0 and 1.0. If the total displacement is null then c=0.0. 
+	"""
+	s=0
+	for p in range(0,len(x)-1):
+		s+= np.sqrt((x[p+1]-x[p])**2+(y[p+1]-y[p])**2)
+	if s!=0.0:
+		return(np.sqrt((x[-1]-x[0])**2+(y[-1]-y[0])**2)/s)
+	else:
+		return(0.0)
+
+
 def two_distributions_plot(DATA1,DATA2,label1,label2):
+	"""
+	This function superimposes the alpha, D plots and distributions for two samples DATA1 and DATA2. 
+	
+	Parameters:
+	DATA1,DATA2<list> list containing the alpha parameter in its first column and the diffusion coefficient in its second column.
+	
+	Return:
+	Plot (alpha,D), superimposed distributions for each feature, log scale, cumulative distribution function plot. 
+	
+	"""
 	fig = plt.figure(figsize=(16, 4))
 	grid = plt.GridSpec(2, 5, hspace=0.4, wspace=0.5)
 	Dvsalpha = fig.add_subplot(grid[:,0:2])
@@ -726,19 +772,19 @@ def two_distributions_plot(DATA1,DATA2,label1,label2):
 		D2.append(DATA2[k][1])
 		A2.append(DATA2[k][0])
 		
-	Dvsalpha.scatter(A1,D1,label=label1,alpha=0.5)
-	Dvsalpha.scatter(A2,D2,label=label2,alpha=0.5)
+	Dvsalpha.scatter(A1,D1,label=label1+", n = "+str(len(D1)),alpha=0.5)
+	Dvsalpha.scatter(A2,D2,label=label2+", m = "+str(len(D2)),alpha=0.5)
 	Dvsalpha.set_ylim(min(D1+D2),max(D1+D2))
 	Dvsalpha.set_yscale('log')
 	Dvsalpha.set_xlabel(r'$\alpha$')
-	Dvsalpha.set_ylabel('D')
+	Dvsalpha.set_ylabel(r'D ($\mu$m$^2/$s)')
 	Dvsalpha.spines["top"].set_visible(False)  
 	Dvsalpha.spines["right"].set_visible(False)
 	Dvsalpha.legend()
 	   
 	distD.hist(D1,bins=30,alpha=0.5,label=label1)
 	distD.hist(D2,bins=30,alpha=0.5,label=label2)
-	distD.set_xlabel('D')
+	distD.set_xlabel('D ($\mu$m$^2/$s)')
 	distD.set_ylabel('#')
 	#distD.legend(fontsize='small')
 	distD.spines["top"].set_visible(False)  
@@ -755,7 +801,7 @@ def two_distributions_plot(DATA1,DATA2,label1,label2):
 	cdfD.hist(D1,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label1)
 	cdfD.hist(D2,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label2)
 	cdfD.set_xscale('log')
-	cdfD.set_xlabel('D')
+	cdfD.set_xlabel('D ($\mu$m$^2/$s)')
 	cdfD.set_ylabel('CDF')
 	#cdfD.legend(fontsize='small')
 	cdfD.spines["top"].set_visible(False)  
@@ -779,7 +825,7 @@ def two_distributions_plot(DATA1,DATA2,label1,label2):
 	logdistD.hist(D1, bins=logbin(D1,30),label=label1,alpha=0.5)
 	logdistD.hist(D2, bins=logbin(D2,30),label=label2,alpha=0.5)
 	logdistD.set_xscale('log')
-	logdistD.set_xlabel('D')
+	logdistD.set_xlabel('D ($\mu$m$^2/$s)')
 	logdistD.set_ylabel('#')
 	#logdistD.legend(fontsize='small')
 	logdistD.spines["top"].set_visible(False)  
@@ -916,6 +962,6 @@ def kolmogorov_smirnov(dist1,dist2,nloop=1000,plot=False):
 		plt.hist(stat_array,bins=10)
 		plt.vlines(stat0,0,max(hist),color='r')
 		plt.xlabel(r'KS statistic $D^*$')
-		plt.title('Statistical distribution for the K-S statistic')
+		plt.title('Statistical distribution for the K-S statistic\n with $D_0$ = ',str(stat0)," and a p-value = ",str(pvalue)+"\n")
 		plt.show()
 	return(stat0,pvalue)
