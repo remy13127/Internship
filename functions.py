@@ -654,7 +654,7 @@ def msd(t, D, alpha):
 	"""
 	return(4*D*t**alpha)
 
-def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,fit_option="thirty_percent"):
+def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,images=[],fit_option="thirty_percent"):
 	"""
 	This function extracts trajectories from CSV files, computes the MSD curves. The MSD curves are fitted according to a 4*D*t^alpha power law, where D is the diffusion coefficient. The fit parameters are stored in the DATA list if R² > rsquared_threshold. DATA contains for each surviving track the power exponent alpha, the diffusion coefficient D, the confinement ratio c, the tracklength, the track ID, the x sequence of coordinates, the y sequence of coordinates. 
 	
@@ -668,6 +668,9 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,fit_option
 	Returns:
 	DATA<list>: contains [alpha<float>,D<float>,confinement ratio<float>,number of frames<int>,track ID,x<ndarray>,y<ndarray>] for each retained trajectory. 
 	"""
+	
+	if len(images)!=len(files) and len(images)>0:
+		print("Warning, your image list has a length different from your data files. It will be ignored and the cell activity will not be computed.")
 
 	minalpha = 1.0E-03
 	minD = 1.0E-04
@@ -680,8 +683,13 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,fit_option
 	params['D']   = Parameter(name='D', value=0.1, min=minD,max=maxD)
 
 	DATA = []
-	for filename in files:
-
+	for p in range(len(files)):
+		filename = files[p]
+		
+		if len(images)==len(files):
+			image_file = images[p]
+			cell_activity_map = compute_mean_intensity_map(image_file)
+		
 		data = pd.read_csv(filename) 
 		tracklist = data.TRACK_ID.unique()  #list of track ID in data
 
@@ -692,7 +700,7 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,fit_option
 			y = data[trackid]["POSITION_Y"].to_numpy()   #y associated to track 'tid'
 
 			rhon = []
-			if len(x)<maxframe and len(x)>minframe:
+			if len(x)<maxframe and len(x)>=minframe:
 				for n in range(1,len(x)):             #for each n = each time lag
 					s = 0
 					for i in range(0,len(x)-n):
@@ -703,21 +711,41 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,fit_option
 				t = [n*dt for n in np.linspace(1,N-1,N-1)]
 				
 				if fit_option=="thirty_percent":
-					nbrpts = int(0.3*N)
-				elif fit_option=="3_points":
-					nbrpts = 3
+					nbrpts = round(0.31*N)
+					n0 = 0
+					
+				elif isinstance(fit_option, int):
+					nbrpts = fit_option
+					n0 = 0
+					
+				elif isinstance(fit_option, list):
+					nbrpts = fit_option[1]
+					n0 = fit_option[0]
 				
-				result = msd_model.fit(rhon[:nbrpts+1], params, t=t[:nbrpts+1])
+				result = msd_model.fit(rhon[n0:nbrpts], params, t=t[n0:nbrpts])
 			    
 				confinement = confinement_ratio(x,y)
 
 				alpha = result.params['alpha'].value
 				D = result.params['D'].value
-				rsquare = 1 - result.residual.var() / np.var(rhon[:nbrpts+1])
+				rsquare = 1 - result.residual.var() / np.var(rhon[n0:nbrpts])
 
 				if rsquare > rsquared_threshold and confinement_ratio!=0.0:
-					feat = [alpha,D,confinement,len(x),tid,x,y]
-					DATA.append(feat)
+					if len(images)==len(files):
+						
+						x_img = [xx/0.133 for xx in x]
+						y_img = [yy/0.133 for yy in y]
+						
+						line = int(y_img[0])
+						column = int(x_img[0])
+						cell_activity = cell_activity_map[line,column]
+						
+						feat = [alpha,D,confinement,len(x),tid,x,y,cell_activity,filename]
+						DATA.append(feat)
+					else:
+						feat = [alpha,D,confinement,len(x),tid,x,y,filename]
+						DATA.append(feat)
+		
 	return(DATA)
 
 def confinement_ratio(x,y):
@@ -739,7 +767,7 @@ def confinement_ratio(x,y):
 		return(0.0)
 
 
-def two_distributions_plot(DATA1,DATA2,label1,label2):
+def two_distributions_plot(DATA1,DATA2,label1,label2,ksloop=500,title=''):
 	"""
 	This function superimposes the alpha, D plots and distributions for two samples DATA1 and DATA2. 
 	
@@ -751,14 +779,16 @@ def two_distributions_plot(DATA1,DATA2,label1,label2):
 	
 	"""
 	fig = plt.figure(figsize=(16, 4))
-	grid = plt.GridSpec(2, 5, hspace=0.4, wspace=0.5)
+	grid = plt.GridSpec(2, 6, hspace=0.4, wspace=0.5)
 	Dvsalpha = fig.add_subplot(grid[:,0:2])
 	distD = fig.add_subplot(grid[0,2])
 	logdistD = fig.add_subplot(grid[0,3])
 	cdfD = fig.add_subplot(grid[0,4])
+	ksD = fig.add_subplot(grid[0,5])
 	distA = fig.add_subplot(grid[1,2])
 	logdistA = fig.add_subplot(grid[1,3])
 	cdfA = fig.add_subplot(grid[1,4])
+	ksA = fig.add_subplot(grid[1,5])
 	
 	D1 = []
 	A1 = []
@@ -772,8 +802,8 @@ def two_distributions_plot(DATA1,DATA2,label1,label2):
 		D2.append(DATA2[k][1])
 		A2.append(DATA2[k][0])
 		
-	Dvsalpha.scatter(A1,D1,label=label1+", n = "+str(len(D1)),alpha=0.5)
-	Dvsalpha.scatter(A2,D2,label=label2+", m = "+str(len(D2)),alpha=0.5)
+	Dvsalpha.scatter(A1,D1,label=label1+", n = "+str(len(D1)),alpha=0.2)
+	Dvsalpha.scatter(A2,D2,label=label2+", m = "+str(len(D2)),alpha=0.2)
 	Dvsalpha.set_ylim(min(D1+D2),max(D1+D2))
 	Dvsalpha.set_yscale('log')
 	Dvsalpha.set_xlabel(r'$\alpha$')
@@ -840,7 +870,59 @@ def two_distributions_plot(DATA1,DATA2,label1,label2):
 	logdistA.spines["top"].set_visible(False)  
 	logdistA.spines["right"].set_visible(False)
 	
+	stat0,pvalue0 = ks_2samp(D1,D2)
+	size1,size2 = len(D1),len(D2)
+	conc = D1+D2
+	s=0
+	stat_array = []
+	for i in range(ksloop):
+		shuffled1 = partition(conc,1)[0]
+		shuffled2 = partition(conc,1)[0]
+		dist1 = shuffled1[0:size1]
+		dist2 = shuffled2[0:size2]
+		stat,pval = ks_2samp(dist1,dist2)
+		stat_array.append(stat)
+		if stat>=stat0:
+			s+=1
+	pvalue = s/ksloop
+	binsize = int(ksloop/50)
+	hist,bin_edge = np.histogram(stat_array,bins=binsize)
+	ksD.hist(stat_array,bins=binsize,alpha=0.6)
+	ksD.vlines(stat0,0,max(hist),color='r',alpha=0.6,label="p-value = "+str(round(pvalue,3)))
+	ksD.set_xlabel(r'KS statistic $D^*$')
+	ksD.set_ylabel('#')
+	ksD.spines['right'].set_visible(False)
+	ksD.spines['top'].set_visible(False)
+	props = dict(boxstyle='round', facecolor='wheat', alpha=1)
+	ksD.text(0.4, 0.8, "p-value = "+str(round(pvalue,3)), transform=ksD.transAxes, fontsize=8, verticalalignment='top', bbox=props)
+	
+	stat0,pvalue0 = ks_2samp(A1,A2)
+	size1,size2 = len(A1),len(A2)
+	conc = A1+A2
+	s=0
+	stat_array = []
+	for i in range(ksloop):
+		shuffled1 = partition(conc,1)[0]
+		shuffled2 = partition(conc,1)[0]
+		dist1 = shuffled1[0:size1]
+		dist2 = shuffled2[0:size2]
+		stat,pval = ks_2samp(dist1,dist2)
+		stat_array.append(stat)
+		if stat>=stat0:
+			s+=1
+	pvalue = s/ksloop
+	binsize = int(ksloop/50)
+	hist,bin_edge = np.histogram(stat_array,bins=binsize)
+	ksA.hist(stat_array,bins=binsize,alpha=0.6)
+	ksA.vlines(stat0,0,max(hist),color='r',alpha=0.6,label="p-value = "+str(round(pvalue,3)))
+	ksA.set_xlabel(r'KS statistic $D^*$')
+	ksA.set_ylabel('#')
+	ksA.spines['right'].set_visible(False)
+	ksA.spines['top'].set_visible(False)
+	props = dict(boxstyle='round', facecolor='wheat', alpha=1)
+	ksA.text(0.4, 0.8, "p-value = "+str(round(pvalue,3)), transform=ksA.transAxes, fontsize=8, verticalalignment='top', bbox=props)
 	#plt.tight_layout()
+	fig.suptitle(title)
 	plt.show()
 
 def compute_mean_intensity_map(filename,gauss=5,plot=False):
@@ -958,10 +1040,173 @@ def kolmogorov_smirnov(dist1,dist2,nloop=1000,plot=False):
 	pvalue = s/nloop
 	print("bootstrap p-value = ",pvalue)
 	if plot==True:
-		hist,bin_edge = np.histogram(stat_array,bins=10)
-		plt.hist(stat_array,bins=10)
-		plt.vlines(stat0,0,max(hist),color='r')
-		plt.xlabel(r'KS statistic $D^*$')
-		plt.title('Statistical distribution for the K-S statistic\n with $D_0$ = ',str(stat0)," and a p-value = ",str(pvalue)+"\n")
+		binsize = int(nloop/50)
+		hist,bin_edge = np.histogram(stat_array,bins=binsize)
+		ax = plt.subplot(111)
+		ax.hist(stat_array,bins=binsize,alpha=0.6)
+		ax.vlines(stat0,0,max(hist),color='r')
+		ax.set_xlabel(r'KS statistic $D^*$')
+		ax.set_ylabel('#')
+		ax.spines['right'].set_visible(False)
+		ax.spines['top'].set_visible(False)
+		ax.set_title('Statistical distribution for the K-S statistic\n with $D_0$ = '+str(round(stat0,3))+" and a p-value = "+str(round(pvalue,5))+"\n")
 		plt.show()
 	return(stat0,pvalue)
+
+def KS_MAP(data,nbins,filter_dist='A',dist_for_ks='D',ksloops=3000):
+	
+	A1,D1,C1,I1 = [],[],[],[]
+	for k in range(np.shape(data)[0]):
+		A1.append(data[k][0])
+		D1.append(np.log10(data[k][1]))
+		C1.append(data[k][2])
+		I1.append(data[k][7])
+	
+	if filter_dist=='A':
+		F = A1
+	elif filter_dist=='I':
+		F = I1
+	elif filter_dist=='C':
+		F = C1
+	elif filter_dist == 'D':
+		F = D1
+		
+	if dist_for_ks=='A':
+		dist = A1
+	elif dist_for_ks=='I':
+		dist = I1
+	elif dist_for_ks=='C':
+		dist = C1
+	elif dist_for_ks == 'D':
+		dist = D1
+	
+	df = (max(F)-min(F))/nbins
+	filter_windows = np.linspace(min(F),max(F)-df,nbins)
+
+	fig, (ax1, ax2) = plt.subplots(1, 2)
+	ax1.hist(F,bins=nbins)
+	ax1.set_xlabel(filter_dist)
+	ax1.set_title('Histogram for the filter feature')
+	
+	ax2.hist(dist,bins=nbins)
+	ax2.set_xlabel(dist_for_ks)
+	ax2.set_title("Histogram for the tested distribution")
+	plt.show()
+
+	ks_matrix = np.zeros((len(filter_windows),len(filter_windows)))
+	
+	for j in range(len(filter_windows)):
+		for i in range(j,len(filter_windows)):
+			window_low1 = filter_windows[i]
+			window_low2 = filter_windows[j]
+
+			dist1 = []
+			dist2 = []
+
+			for k in range(len(F)):
+				filter_param = F[k]
+				test_value = dist[k]
+			    
+				if window_low1 <= filter_param <= window_low1 + df:
+					dist1.append(test_value)
+				if window_low2 <= filter_param <= window_low2 + df:
+					dist2.append(test_value)
+
+
+			stat,pvalue = kolmogorov_smirnov(dist1,dist2,nloop=ksloops,plot=False)
+			ks_matrix[i][j] = pvalue
+			ks_matrix[j][i] = ks_matrix[i][j]
+			
+	return(ks_matrix,filter_windows)
+	
+	
+def KS_MAP_2SAMP(data1,data2,nbins,filter_dist='A',dist_for_ks='D',ksloops=3000):
+	
+	A1,D1,C1,I1 = [],[],[],[]
+	A2,D2,C2,I2 = [],[],[],[]
+	
+	for k in range(np.shape(data1)[0]):
+		A1.append(data1[k][0])
+		D1.append(np.log10(data1[k][1]))
+		C1.append(data1[k][2])
+		I1.append(data1[k][7])
+	
+	for k in range(np.shape(data2)[0]):
+		A2.append(data2[k][0])
+		D2.append(np.log10(data2[k][1]))
+		C2.append(data2[k][2])
+		I2.append(data2[k][7])
+	
+	if filter_dist=='A':
+		F1 = A1
+		F2 = A2
+	elif filter_dist=='I':
+		F1 = I1
+		F2 = I2
+	elif filter_dist=='C':
+		F1 = C1
+		F2 = C2
+	elif filter_dist == 'D':
+		F1 = D1
+		F2 = D2
+		
+	if dist_for_ks=='A':
+		distri1 = A1
+		distri2 = A2
+	elif dist_for_ks=='I':
+		distri1 = I1
+		distri2 = I2
+	elif dist_for_ks=='C':
+		distri1 = C1
+		distri2 = C2
+	elif dist_for_ks == 'D':
+		distri1 = D1
+		distri2 = D2
+	minimum = max([min(F1),min(F2)])
+	maximum = min([max(F1),max(F2)])
+	df = (maximum-minimum)/nbins
+	print("Width of the filter window = ",df)
+	filter_windows = np.linspace(minimum,maximum-df,nbins)
+
+	fig, (ax1, ax2) = plt.subplots(1, 2)
+	ax1.hist(F1,bins=nbins)
+	ax1.hist(F2,bins=nbins)
+	ax1.set_xlabel(filter_dist)
+	ax1.set_title('Histogram for the filter feature')
+	
+	ax2.hist(distri1,bins=nbins)
+	ax2.hist(distri2,bins=nbins)
+	ax2.set_xlabel(dist_for_ks)
+	ax2.set_title("Histogram for the tested distribution")
+	plt.show()
+
+	ks_matrix = np.zeros((len(filter_windows),len(filter_windows)))
+	
+	for i in range(len(filter_windows)):
+		for j in range(len(filter_windows)):
+			window_low1 = filter_windows[i]
+			window_low2 = filter_windows[j]
+
+			dist1 = []
+			dist2 = []
+
+			for k in range(len(F1)):
+				filter_param = F1[k]
+				test_value = distri1[k]
+			    
+				if window_low1 <= filter_param <= window_low1 + df:
+					dist1.append(test_value)
+					
+			for k in range(len(F2)):
+				filter_param = F2[k]
+				test_value = distri2[k]
+				if window_low2 <= filter_param <= window_low2 + df:
+					dist2.append(test_value)
+
+
+			stat,pvalue = kolmogorov_smirnov(dist1,dist2,nloop=ksloops,plot=False)
+			ks_matrix[i][j] = pvalue
+			
+	return(ks_matrix,filter_windows)
+		   
+
