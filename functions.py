@@ -663,10 +663,11 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,images=[],
 	dt<float>: time interval bewteen two frames.
 	minframe(default=5),maxframe(default=500)<int>: minimum (and maximum) number of frames in order to keep a track and perform the analysis. 
 	rsquared_threshold(default=0.8)<float>: threshold on the accurateness of the fit. 
+	images<list of str>: list of images associated to each csv file. If the lengths do not match, the images are ignored and the cell activity is not computed. 
 	fit_option(default="thirty_percent")<str>: perform the MSD fit over 30 % of the available points ("thirty_percent") or 3 points ("3_points").
 	
 	Returns:
-	DATA<list>: contains [alpha<float>,D<float>,confinement ratio<float>,number of frames<int>,track ID,x<ndarray>,y<ndarray>] for each retained trajectory. 
+	DATA<list>: contains [alpha<float>,D<float>,confinement ratio<float>,number of frames<int>,track ID,x<ndarray>,y<ndarray>,rhon<ndarray>,csv filename<str>,(cell_activity<int>)] for each retained trajectory. 
 	"""
 	
 	if len(images)!=len(files) and len(images)>0:
@@ -740,10 +741,10 @@ def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,images=[],
 						column = int(x_img[0])
 						cell_activity = cell_activity_map[line,column]
 						
-						feat = [alpha,D,confinement,len(x),tid,x,y,cell_activity,filename]
+						feat = [alpha,D,confinement,len(x),tid,x,y,rhon,filename,cell_activity]
 						DATA.append(feat)
 					else:
-						feat = [alpha,D,confinement,len(x),tid,x,y,filename]
+						feat = [alpha,D,confinement,len(x),tid,x,y,rhon,filename]
 						DATA.append(feat)
 		
 	return(DATA)
