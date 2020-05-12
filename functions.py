@@ -388,12 +388,12 @@ def NormMSDInterceptError(N,sigma,D,dt,Pmin):
 #########################################################################
 #########################################################################
 
-def BROWNIAN_MOTION(N,dimension,D,t):
+def BROWNIAN_MOTION(N,dimension,D,t,alpha=1):
 	'''This simulation generates 2D isotropic Brownian motion trajectories'''
 	dt = t / float(N)
 	x = np.zeros ([dimension, N])
 	for j in range (1, N):
-		s = np.sqrt(2.0*dimension*D*dt)*np.random.randn(1)
+		s = np.sqrt(2.0*dimension*D*dt**alpha)*np.random.randn(1)
 		if (dimension==1):
 			dx=s*np.ones(1)
 		else:
@@ -1211,3 +1211,8 @@ def KS_MAP_2SAMP(data1,data2,nbins,filter_dist='A',dist_for_ks='D',ksloops=3000)
 	return(ks_matrix,filter_windows)
 		   
 
+def fix_heatmap():
+	b, t = plt.ylim() # discover the values for bottom and top
+	b += 0.5 # Add 0.5 to the bottom
+	t -= 0.5 # Subtract 0.5 from the top
+	plt.ylim(b, t) # update the ylim(bottom, top) values
