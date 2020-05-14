@@ -64,6 +64,8 @@ def mean_msd(MSD_Series,dt=0.05,cutoff=0.0,show_cutoff=False):
 	plt.fill_between(TIMELAG,[a+np.sqrt(b) for a,b in zip(MMSD,MVAR)], [a-np.sqrt(b) for a,b in zip(MMSD,MVAR)],color='gray',alpha=0.1)
 	if show_cutoff==True:
 		plt.vlines(cutoff,plt.gca().get_ylim()[0],plt.gca().get_ylim()[1],linestyles='dashed',colors='k')
+	else:
+		plt.vlines(timelag[-1],plt.gca().get_ylim()[0],plt.gca().get_ylim()[1],linestyles='dashed',colors='k')
 	plt.xlabel('Time lag (s)')
 	plt.ylabel(r'Ensemble average of the MSD ($\mu$m$^2$)')
 	plt.show()
@@ -370,7 +372,7 @@ def Michalet(MSD_Series,dt=0.05,cutoff=0.0):
 	hist.get_yaxis().tick_left()
 	hist_array = [n*dt for n in N_array]
 	hist.hist(hist_array,color=cexp, bins=int(len(N_array)))
-	hist.axvline(cutoff*dt, 0, max(hist_array),color=cth)
+	hist.axvline(cutoff/dt, 0, max(hist_array),color=cth)
 	hist.set_xlabel('Track duration (s)',fontsize=10)
 	hist.set_ylabel('Number of tracks',fontsize=10)
 
