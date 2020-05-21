@@ -1,0 +1,64 @@
+graphics opengl_good
+dim 2
+
+background_color black
+
+graphics opengl_good
+graphic_iter 5
+tiff_iter 5
+tiff_max 5000
+tiff_name Brownian_cages_2/snap
+
+boundaries x 0 100
+boundaries y 0 100
+
+time_start 0
+time_stop 50
+time_step 0.01
+
+
+species S1 S2
+difc S1(all) 0.5
+difc S2(all) 0.1
+color all(all) white
+display_size all(all) 0.5
+
+start_surface membrane
+action all both reflect
+color both black
+thickness 0.2
+panel sphere 25 25 10 100
+end_surface
+
+start_surface membrane3
+action all both reflect
+color both black
+thickness 0.2
+panel sphere 75 75 10 100 #radius 10
+end_surface
+
+start_compartment inside
+surface membrane
+point 25 25
+end_compartment
+
+start_compartment inside3
+surface membrane3
+point 75 75
+end_compartment
+
+reaction rxn1 S1 + S1 -> S1 + S1
+binding_radius rxn1 1
+product_placement rxn1 bounce
+
+reaction rxn2 S2 + S2 -> S2 + S2
+binding_radius rxn2 1
+product_placement rxn2 bounce
+
+compartment_mol 50 S1 inside
+compartment_mol 50 S2 inside3
+
+output_files output2.txt
+cmd n 5 listmols2 output2.txt 
+
+end_file
