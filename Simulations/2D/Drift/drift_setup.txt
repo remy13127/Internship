@@ -1,0 +1,65 @@
+#Brownian diffusion in 2 circular absorbing corrals, with 2 different diffusion coefficients. D=0.1 in the bottom corral, D=0.01 in the top one.
+#calibration is 1px = 0.37037 µm, dt = 0.05 s
+
+graphics opengl_better
+graphic_iter 5
+tiff_iter 5
+
+light room ambient 1 1 1
+light 0 diffuse 1 1 1
+light 0 ambient 1 1 1
+light 0 specular 1 1 1
+
+dim 2
+boundaries x 0 100
+boundaries y 0 100
+
+background_color black
+
+time_start 0
+time_stop 60
+time_step 0.01
+
+tiff_name movie/snap
+tiff_max 1200
+
+species S1 S2 
+difc S1(all) 0.1
+drift S1(all) 0 0.25
+difc S2(all) 0.1
+
+color all(all) white
+display_size all(all) 0.25
+
+start_surface membrane1
+action all both absorb
+color both black
+thickness 0.1
+panel sphere 25 25 20 100
+end_surface
+
+start_compartment inside1
+surface membrane1
+point 25 25
+end_compartment
+
+
+start_surface membrane2
+action all both absorb
+color both black
+thickness 0.1
+panel sphere 25 75 20 100
+end_surface
+
+start_compartment inside2
+surface membrane2
+point 25 75
+end_compartment
+
+compartment_mol 100 S1 inside1
+compartment_mol 100 S2 inside2
+
+output_files output.txt
+cmd n 5 listmols2 output.txt 
+
+end_file

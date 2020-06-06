@@ -1,0 +1,64 @@
+#Ligand-receptor-complex simulation
+
+graphics opengl_good
+graphic_iter 5
+tiff_iter 5
+
+dim 2
+boundaries x 0 100
+boundaries y 0 100
+
+
+background_color black
+
+time_start 0
+time_stop 60
+time_step 0.01
+
+tiff_name movie/snap
+tiff_max 1200
+
+species R L C
+difc R(all) 0.01
+difc L(all) 0.1
+difc C(all) 0.005
+
+color R(all) white
+color C(all) white
+
+display_size R(all) 0.25
+display_size C(all) 0.25
+
+
+display_size L(all) 0.01
+color L(all) black
+
+
+start_surface membrane
+action all both absorb
+color both black
+thickness 0.2
+panel sphere 50 50 50 1000
+end_surface
+
+start_compartment inside
+surface membrane
+point 50 50
+end_compartment
+
+start_compartment outside
+surface membrane
+point 0 0
+end_compartment
+
+reaction rxn1 R + L -> C
+binding_radius rxn1 0.01
+
+compartment_mol 500 R inside
+compartment_mol 50 C inside
+mol 500 L u u
+
+output_files output.txt
+cmd n 5 listmols2 output.txt 
+
+end_file

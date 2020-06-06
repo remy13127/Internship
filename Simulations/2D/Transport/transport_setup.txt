@@ -1,0 +1,78 @@
+# Brownian diffusion in an absorbing circular corral with transporting railways. 
+
+graphics opengl_good
+graphic_iter 5
+tiff_iter 5
+
+dim 2
+boundaries x 0 100
+boundaries y 0 100
+
+
+background_color black
+
+time_start 0
+time_stop 60
+time_step 0.01
+
+tiff_name movie/snap
+tiff_max 1200
+
+species S
+difc S(all) 0.1
+drift S(front) 0 0.3
+color S(all) white
+color S(front) white
+display_size S(all) 0.25
+
+start_surface membrane
+action all both reflect
+color both black
+thickness 1
+panel sph 50 50 50 1000
+end_surface
+
+start_compartment inside
+surface membrane
+point 50 50
+end_compartment
+
+start_compartment outside
+surface membrane
+point 0 0
+end_compartment
+
+start_surface track1
+rate S fsoln front 0.5
+rate S front fsoln 0.3
+color both 0 0 0 0
+thickness 0.01
+panel rect +0 25 25 50
+panel rect +0 30 25 50
+panel rect +0 35 25 50
+panel rect +0 40 25 50
+panel rect +0 45 25 50
+panel rect +0 50 25 50
+end_surface
+
+start_surface track2
+rate S fsoln back 0.5
+rate S front back 0.1
+color both 0 0 0 0
+thickness 0.01
+panel rect +0 55 25 50
+panel rect +0 60 25 50
+panel rect +0 65 25 50
+panel rect +0 70 25 50
+panel rect +0 75 25 50
+end_surface
+
+#surface_drift S(front) track1 all 0.3
+#surface_drift S(front) track2 all -0.3
+
+compartment_mol 500 S inside
+
+output_files output.txt
+cmd n 5 listmols2 output.txt 
+
+end_file
