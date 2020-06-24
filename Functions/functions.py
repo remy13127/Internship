@@ -1,764 +1,173 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from sklearn.linear_model import LinearRegression
+import matplotlib as mpl
+import seaborn as sns
 from lmfit import Model,Parameter,Parameters
+from sklearn.linear_model import LinearRegression
+from matplotlib.ticker import LinearLocator
+import matplotlib.ticker as mticker
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MultipleLocator
 from scipy.stats import norm, ks_2samp
 import random
-import mahotas as mh
+from sklearn.metrics import r2_score
 
 
-def MSD_tracks(data,min_length,max_length):
-	tracklist = data.TRACK_ID.unique()
-	rho_tracks = []
-	N_array = []
-	for t_id in tracklist:
-		
-		track_id = data["TRACK_ID"] == t_id
-		x = data[track_id]["POSITION_X"].to_numpy()
-		y = data[track_id]["POSITION_Y"].to_numpy()
+#########################################################
+######### FUNCTIONS FOR NON SPECIFIC ANALYSIS ###########
+#########################################################
 
-		N = len(x)	
-		rho_i = []
-
-		if N>min_length and N<max_length:
-			N_array.append(N)
-			for n in range(1,N):
-				s = 0
-				for i in range(0,N-n):
-					#r_in = np.sqrt(x[i+n]**2 + y[i+n]**2)
-					#r_i  = np.sqrt(x[i]**2   + y[i]**2)
-					#s+=(r_in - r_i)**2
-					s+=(x[n+i] - x[i])**2 + (y[n+i] - y[i])**2
-				rho_i.append(1/(N - n)*s)
-			rho_tracks.append(rho_i)
-
-
-	square_matrix = np.zeros([len(rho_tracks),len(max(rho_tracks,key = lambda x: len(x)))])
-	for i,j in enumerate(rho_tracks):
-    		square_matrix[i][0:len(j)] = j
-
-	return(square_matrix,N_array)
-
-def MSD_tracks_from_file(filename):
-	msd_tracks = []
-	with open(filename) as f:
-		for line in f:
-				inner_list = [float(elt.strip()) for elt in line.split(' ')[:-1]]
-				msd_tracks.append(inner_list)
-	N_array = [np.shape(msd_tracks[k][:])[0]+1 for k in range(np.shape(msd_tracks)[0])]
-	matrix = np.zeros([len(msd_tracks),len(max(msd_tracks,key = lambda x: len(x)))])
-	for i,j in enumerate(msd_tracks):
-		matrix[i][0:len(j)] = j
-	return(matrix,N_array)
-
-
-def average(data):
-
-	'''This function takes as input the individual MSD curves computed for each track. 
-	The output is an averaged MSD curve over all of the available data 
-	(the larger the timelag, the smaller the quantity of data available and the poorer the average.'''
-
-	N=np.shape(data)[1]+1
-	N_T=np.shape(data)[0]
-
-	VARIANCE = []
-	MSD = []
-
-	for k in range(0,N-1):
-		s1=0
-		s2=0
-		N_nonzero=0
-		for l in range(0,N_T):
-			if data[l][k]!=0.0:
-				N_nonzero+=1
-			s1+=data[l][k]**2
-			s2+=data[l][k]
-		VARIANCE.append(1/float(N_nonzero)*s1 - (1/float(N_nonzero)*s2)**2)
-		MSD.append(1/float(N_nonzero)*s2)
-	return(MSD,VARIANCE)
-
-def COVARIANCE(data,cutoff):
-	N = np.shape(data)[1]+1
-	covariance_matrix = np.zeros((cutoff,cutoff))
-	N_T = np.shape(data)[0]
-	for n in range(0,cutoff):
-		for m in range(0,cutoff):
-			s1=0
-			s2=0
-			s3=0
-			Nnonzeron=0
-			Nnonzerom=0
-			Nnonzeronm=0
-			for i in range(0,N_T):
-				if data[i][n]!=0.0 and data[i][m]!=0.0:
-					Nnonzeronm+=1
-				if data[i][n]!=0.0:
-					Nnonzeron+=1
-				if data[i][m]!=0.0:
-					Nnonzerom+=1
-				s1+=data[i][n]*data[i][m]
-				s2+=data[i][n]
-				s3+=data[i][m]
-			covariance_matrix[n][m] = 1/float(Nnonzeronm)*s1 - 1/float(Nnonzeron)*1/float(Nnonzerom)*s2*s3
-	return(covariance_matrix)
-
-
-def NormMSDSlopeError_exp(N,sigma,D,dt,variance_matrix,covariance_matrix,Pmin):
-	alpha = 4*D*dt
-	x = sigma**2 / (D*dt)
-	#Set all sums to 0.0
-	sum0=0
-	sum1=0
-	sum2=0
-	sumh0=0
-	sumh1=0
-	sumh2=0
-	if Pmin<2:
-		return("Pmin smaller than 2. Abort.")
-	elif Pmin>N:
-		return("Pmin larger than N. Abort.")
-	else:
-		for i in range(1,Pmin+1):
-			fi = alpha**2 / variance_matrix[i-1]
-			sum0+=fi
-			sum1+=i*fi
-			sum2+=i**2*fi
-			h0=0
-			h1=0
-			for j in range(1,i):
-				fj = alpha**2 / variance_matrix[j-1]
-				gij = covariance_matrix[i-1,j-1]/alpha**2
-				hij = fi*fj*gij
-				h0+=hij
-				h1+=j*hij
-			sumh0+=h0
-			sumh1+=i*h0 + h1
-			sumh2+=i*h1
-		delta = sum0*sum2 - sum1**2
-		temp = 1/delta*(sum0 + 2*(sum1**2*sumh0 - sum0*sum1*sumh1 + sum0**2*sumh2)/delta)
-		norm_sigmab = np.sqrt(temp)
-		return(norm_sigmab)
-
-def NormMSDInterceptError_exp(N,sigma,D,dt,variance_matrix,covariance_matrix,Pmin):
-	alpha = 4*D*dt
-	x = sigma**2 / (D*dt)
-	#Set all sums to 0.0
-	sum0=0
-	sum1=0
-	sum2=0
-	sumh0=0
-	sumh1=0
-	sumh2=0
-	if Pmin<2:
-		return("Pmin smaller than 2. Abort.")
-	elif Pmin>N:
-		return("Pmin larger than N. Abort.")
-	else:
-		for i in range(1,Pmin+1):
-			fi = alpha**2 / variance_matrix[i-1]
-			sum0+=fi
-			sum1+=i*fi
-			sum2+=i**2*fi
-			h0=0
-			h1=0
-			for j in range(1,i):
-				fj = alpha**2 / variance_matrix[j-1]
-				gij = covariance_matrix[i-1,j-1]/alpha**2
-				hij = fi*fj*gij
-				h0+=hij
-				h1+=j*hij
-			sumh0+=h0
-			sumh1+=i*h0 + h1
-			sumh2+=i*h1
-		delta = sum0*sum2 - sum1**2
-		temp = 1/delta*(sum2 + 2*(sum2**2*sumh0 - sum1*sum2*sumh1 + sum1**2*sumh2)/delta)
-		norm_sigmaa = np.sqrt(temp)/x
-		return(norm_sigmaa)
-
-##############################################################
-##############################################################
-
-
-def f(n,N,x):
-    '''
-    This function is an intermediate step in computing the variance of an ideal trajectory. 
-    n: time lag
-    N: total number of time steps
-    x: reduced localization error (x=epsilon/alpha)
-    '''
-    K = N-n
-    if n<=K:
-        fminus = n*(4*pow(n,2)*K + 2*K - pow(n,3) + n)/6/pow(K,2) + (2*n*x + (1+(1 - n/K)/2)*pow(x,2))/K
-        return(1/fminus)
-    else:
-        fplus = (6*pow(n,2)*K - 4*n*pow(K,2) + 4*n + pow(K,3) - K)/6/K + (2*n*x + pow(x,2))/K
-        return(1/fplus)
-
-def THEORETICAL_VARIANCE(N,sigma,D,dt):
-	''' This program computes the theoretical variance for an ideal trajectory. 
-	N: total number of time steps
-	sigma: localization uncertainty due to noise (identical in X and Y)
-	D: diffusion coefficient (measured)
-	t: total duration of simulation
-	'''
-	alpha = 4*D*dt
-	x = 4*sigma**2 / alpha
-	sigma_array=np.zeros(N-1)
-	for n in range(0,N-1):
-		sigma_array[n]=alpha**2 / f(n+1,N,x)
-	return(sigma_array)
-
-def THEORETICAL_VARIANCE_2(N_array,sigma,D,dt):
-	''' This program computes the theoretical variance for an ideal trajectory. 
-	N: total number of time steps
-	sigma: localization uncertainty due to noise (identical in X and Y)
-	D: diffusion coefficient (measured)
-	t: total duration of simulation
-	'''
-	alpha = 4*D*dt
-	x = 4*sigma**2 / alpha
-	sigma_ensemble=[]
-	for k in N_array:
-		N=k
-		sigma_array = []
-		for n in range(0,N-1):
-			sigma_array.append(alpha**2 / f(n+1,N,x))
-		sigma_ensemble.append(sigma_array)
-
-	square_matrix = np.zeros([len(sigma_ensemble),len(max(sigma_ensemble,key = lambda x: len(x)))])
-	for i,j in enumerate(sigma_ensemble):
-		square_matrix[i][0:len(j)] = j
-
-	result,useless = average(square_matrix)
-	return(result)
-
-def THEORETICAL_COVARIANCE_2(N_array,sigma,D,dt,cutoff):
-	"""Cross correlation variance sigma_{nm}^2 
-	N: total number of time steps
-	sigma: localization uncertainty
-	D: Diffusion coefficient
-	t: duration of experiment / simulation 
-	"""
-	epsilon=4*sigma**2
-	alpha=4*D*dt
-	covariance_ensemble = []
-	for k in N_array:
-		N=k
-		theory_covariance = np.zeros((N-1,N-1))
-		for n in range(0,N-1):
-			for m in range(0,N-1):
-				theory_covariance[n,m] = THEORETICAL_COVARIANCE(n+1,m+1,N,sigma,D,dt)
-				theory_covariance[m,n] = theory_covariance[n,m]
-		covariance_ensemble.append(theory_covariance)
+def T_MSD(x,y,dt=0.05):
+	"""Takes x and y trajectories and computes the time-averaged MSD (T-MSD)
 	
-	N_tracks = np.shape(covariance_ensemble)[0]
-
-	#Nsize = np.amax(N_array)-1
-	Nsize = cutoff
-	temp = np.zeros((N_tracks,Nsize,Nsize)) #(Nloops,N-1,N-1)
-	for k in range(0,N_tracks):
-		length = np.shape(covariance_ensemble[k][:][:])[0]
-		if length<Nsize:
-			nshape=length
-		else:
-			nshape=Nsize
-		for n in range(0,nshape):
-			for m in range(0,nshape):
-				temp[k][n][m] = covariance_ensemble[k][n][m]
-	
-
-	result = np.zeros((Nsize,Nsize))
-	for n in range(0,Nsize):
-		for m in range(0,Nsize):
-			Nnonzero = 0
-			s=0
-			for k in range(0,N_tracks):
-				if temp[k][n][m]!=0.0:
-					Nnonzero+=1
-				s+=temp[k][n][m]
-			#if Nnonzero==0.0:
-			#	print(n,m,k)
-			result[n][m]=s/float(Nnonzero)
-	return(result)
-
-
-def THEORETICAL_COVARIANCE(m,n,N,sigma,D,dt):
-	"""Cross correlation variance sigma_{nm}^2 
-	N: total number of time steps
-	sigma: localization uncertainty
-	D: Diffusion coefficient
-	t: duration of experiment / simulation 
+	Parameters
+	----------
+	x,y : list or ndarray
+	    series of positions separated by a time dt
+	dt : float
+	    time step between each position in the trajectories
+	    
+	Returns
+	-------
+	msd
+	   The T-MSD computed at each timelag n*dt, n=1,...,N-1
+	timelag
+	    The associated time lag array
 	"""
-	epsilon=4*sigma**2
-	alpha=4*D*dt
-	K = N - n
-	P = N - m
-	if m<=n:
-		temp = m
-		m = n
-		n = temp
-	if m+n<=N:
-		sigmanm=n/(6*K*P)*(4*pow(n,2)*K + 2*K - pow(n,3) + n + (m-n)*(6*n*P - 4*pow(n,2) - 2))*pow(alpha,2)+1/K*(2*n*alpha*epsilon+(1-n/(2*P))*pow(epsilon,2)/2)
-		return(sigmanm)
-	else:
-		sigmanm=1/(6*K)*(6*pow(n,2)*K - 4*n*pow(K,2)+pow(K,3)+4*n - K +(m-n)*((n+m)*(2*K+P)+2*n*P-3*pow(K,2)+1))*pow(alpha,2)+1/K*(2*n*alpha*epsilon+pow(epsilon,2)/2)
-		return(sigmanm)
-
-
-def g(m,n,N,sigma,D,dt):
-	alpha = 4*D*dt
-	return(THEORETICAL_COVARIANCE(m,n,N,sigma,D,dt) / alpha**2)
-
-def NormMSDSlopeError(N,sigma,D,dt,Pmin):
-	x = sigma**2 / (D*dt)
-	#Set all sums to 0.0
-	sum0=0
-	sum1=0
-	sum2=0
-	sumh0=0
-	sumh1=0
-	sumh2=0
-	if Pmin<2:
-		return("Pmin smaller than 2. Abort.")
-	elif Pmin>N:
-		return("Pmin larger than N. Abort.")
-	else:
-		for i in range(1,Pmin+1):
-			fi = f(i,N,x)
-			sum0+=fi
-			sum1+=i*fi
-			sum2+=i**2*fi
-			h0=0
-			h1=0
-			for j in range(1,i):
-				fj = f(j,N,x)
-				gij = g(i,j,N,sigma,D,dt)
-				hij = fi*fj*gij
-				h0+=hij
-				h1+=j*hij
-			sumh0+=h0
-			sumh1+=i*h0 + h1
-			sumh2+=i*h1
-		delta = sum0*sum2 - sum1**2
-		temp = 1/delta*(sum0 + 2*(sum1**2*sumh0 - sum0*sum1*sumh1 + sum0**2*sumh2)/delta)
-		#print("delta = ",delta,"temp = ",temp)
-		norm_sigmab = np.sqrt(temp)
-		return(norm_sigmab)
-
-def NormMSDInterceptError(N,sigma,D,dt,Pmin):
-	x = sigma**2 / (D*dt)
-	#Set all sums to 0.0
-	sum0=0
-	sum1=0
-	sum2=0
-	sumh0=0
-	sumh1=0
-	sumh2=0
-	if Pmin<2:
-		return("Pmin smaller than 2. Abort.")
-	elif Pmin>N:
-		return("Pmin larger than N. Abort.")
-	else:
-		for i in range(1,Pmin+1):
-			fi = f(i,N,x)
-			sum0+=fi
-			sum1+=i*fi
-			sum2+=i**2*fi
-			h0=0
-			h1=0
-			for j in range(1,i):
-				fj = f(j,N,x)
-				gij = g(i,j,N,sigma,D,dt)
-				hij = fi*fj*gij
-				h0+=hij
-				h1+=j*hij
-			sumh0+=h0
-			sumh1+=i*h0 + h1
-			sumh2+=i*h1
-		delta = sum0*sum2 - sum1**2
-		temp = 1/delta*(sum2 + 2*(sum2**2*sumh0 - sum1*sum2*sumh1 + sum1**2*sumh2)/delta)
-		#print("delta = ",delta,"temp = ",temp)
-		norm_sigmaa = np.sqrt(temp)/x
-		return(norm_sigmaa)
-
-#########################################################################
-#########################################################################
-
-def BROWNIAN_MOTION(N,dimension,D,t,alpha=1):
-	'''This simulation generates 2D isotropic Brownian motion trajectories'''
-	dt = t / float(N)
-	x = np.zeros ([dimension, N])
-	for j in range (1, N):
-		s = np.sqrt(2.0*dimension*D*dt**alpha)*np.random.randn(1)
-		if (dimension==1):
-			dx=s*np.ones(1)
-		else:
-			dx = np.random.randn(dimension)
-			norm_dx = np.sqrt(np.sum(dx ** 2))
-			for i in range(0, dimension):
-				dx[i] = s * dx[i] / norm_dx
-		x[0:dimension,j] = x[0:dimension,j-1] + dx[0:dimension]
-	return(x)
-
-
-def msd_average(x,y):
-	x=np.array(x)
-	y=np.array(y)
+	
+	msd = []
 	N = len(x)
-	rhoarray = []
 	for n in range(1,N):
-		K = N - n
-		rhon=0
-		for i in range(0,K):
-			rhon+=(x[n+i] - x[i])**2 + (y[n+i] - y[i])**2
-		rhoarray.append(1/K*rhon)
-	return(rhoarray)
+		s = 0
+		for i in range(0,N-n):
+			s+=(x[n+i] - x[i])**2 + (y[n+i] - y[i])**2
+		msd.append(1/(N-n)*s)
+
+	timelag = np.linspace(dt,(N-1)*dt,N-1)
+	return(msd,timelag)
 
 
-#########################
-#########################
-
-def data_histogram(data,dt):
-	tracklist = data.TRACK_ID.unique()  
-	x = []
-	length_track = []
-	index = 0
-	for tid in tracklist:
-		trackid = data["TRACK_ID"] == tid
-		x.append(data[trackid]["POSITION_X"].to_numpy())
-		length_track.append(np.shape(x[index][:])[0])
-		index+=1
-	return(length_track)
-
-def plot_preprocessed_dist(processed_feat,feat):
-	fig = plt.figure(figsize=[18.,5.])
-	fig.tight_layout()
-	gs = GridSpec(1,4)
-
-	dist_alpha = fig.add_subplot(gs[0])
-	dist_D = fig.add_subplot(gs[1])
-	dist_confinement  = fig.add_subplot(gs[2])
-	#intensity_length = fig.add_subplot(gs[3])
-	cdf_d = fig.add_subplot(gs[3])
-
-	dist_alpha.hist(processed_feat[:,0],bins=10)
-	dist_alpha.hist(feat[:,0],bins=10,color='r', ec='r',alpha=0.5)
-	dist_alpha.set_xlabel(r'$\alpha$')
-	dist_alpha.set_ylabel('#')
-	dist_alpha.spines["top"].set_visible(False)  
-	dist_alpha.spines["right"].set_visible(False)
-	dist_alpha.get_xaxis().tick_bottom()  
-	dist_alpha.get_yaxis().tick_left()
-	dist_alpha.xaxis.set_minor_locator(MultipleLocator(1))
-	plt.xticks(fontsize=10)  
-	plt.yticks(fontsize=10)
-
-	dist_D.hist(processed_feat[:,1],bins=10)
-	dist_D.hist(feat[:,1],bins=10,color='r', ec='r',alpha=0.5)
-	dist_D.set_xlabel(r'$D$ ($\mu$m$^2/$s)')
-	dist_D.set_ylabel('#')
-	dist_D.spines["top"].set_visible(False)  
-	dist_D.spines["right"].set_visible(False)
-	dist_D.get_xaxis().tick_bottom()  
-	dist_D.get_yaxis().tick_left()
-	dist_D.xaxis.set_minor_locator(MultipleLocator(1))
-	plt.xticks(fontsize=10)  
-	plt.yticks(fontsize=10)
-
-	dist_confinement.hist(processed_feat[:,2],bins=10)
-	dist_confinement.hist(feat[:,2],bins=10,color='r', ec='r',alpha=0.5)
-	dist_confinement.set_xlabel('Confinement ratio')
-	dist_confinement.set_ylabel('#')
-	dist_confinement.spines["top"].set_visible(False)  
-	dist_confinement.spines["right"].set_visible(False)
-	dist_confinement.get_xaxis().tick_bottom()  
-	dist_confinement.get_yaxis().tick_left()
-	plt.xticks(fontsize=10)  
-	plt.yticks(fontsize=10)
-
-
-	#intensity_length.scatter(feat[:,3],feat[:,2])
-	#intensity_length.set_xlabel("Track length")
-	#intensity_length.set_ylabel('Mean intensity variation / frame (%)')
-	#intensity_length.spines["top"].set_visible(False)  
-	#intensity_length.spines["right"].set_visible(False)
-
-	darray = np.sort(np.array(feat[:,1]))
-	Darray = darray[darray > 1.0E-07]
-	n, bins, patches = cdf_d.hist(Darray, 10000, density=True, histtype='step',cumulative=True, label='Empirical')
-	cdf_d.set_xlabel(r'$D$ ($\mu$m$^2/$s)')
-	cdf_d.set_ylabel('Cumulative distribution function')
-	cdf_d.spines["top"].set_visible(False)  
-	cdf_d.spines["right"].set_visible(False)
-	cdf_d.get_xaxis().tick_bottom()  
-	cdf_d.get_yaxis().tick_left()
-	cdf_d.set_xscale('log')
-	plt.xticks(fontsize=10)  
-	plt.yticks(fontsize=10)
-
-	plt.subplots_adjust(wspace=0.8)
-	plt.show()
-
-def plot_track_characteristics(dt,feat,msd_all,nbr_frames,color_array,minframe,maxframe,TRACKS):
-
-	alpha,diff,conf,length_track = zip(*feat)
-
-	fig = plt.figure(figsize=[18.,8.])
-	fig.tight_layout()
-	gs = GridSpec(4,7)
-
-	ax_joint = fig.add_subplot(gs[1:4,3:6])
-	ax_marg_x = fig.add_subplot(gs[0,3:6])
-	ax_marg_y = fig.add_subplot(gs[1:4,6])
-	msd_plot  = fig.add_subplot(gs[1:4,0:3])
-	hist_frame = fig.add_subplot(gs[0,0:3])
-	trajectories = fig.add_subplot(gs[0,6])
-
-	ax_joint.scatter(alpha,diff,c=color_array)
-	ax_joint.set_title('Fit parameters for each MSD curve\n and distributions projected on each axis')
-	#ax_joint.set_yscale('log')
-	#ax_joint.text(max(alpha)/50,max(diff)/2,"Mean D = "+str(np.mean(diff)))
-	#ax_joint.text(max(alpha)/50,max(diff)/2.3,r"Mean $\alpha$ = "+str(np.mean(alpha)))
-
-	ax_marg_x.axis('on')
-	ax_marg_x.spines["top"].set_visible(False)  
-	ax_marg_x.spines["right"].set_visible(False)
-	ax_marg_x.hist(alpha,bins=70,orientation="vertical",color='grey', ec='grey')
-	ax_marg_y.axis('on')
-	ax_marg_y.spines["top"].set_visible(False)  
-	ax_marg_y.spines["right"].set_visible(False)
-	ax_marg_y.hist(diff,orientation="horizontal",bins=np.logspace(np.log10(min(diff)),np.log10(max(diff)), 30),color='grey', ec='grey')
-	ax_marg_y.set_yscale('log')
-
-	# Turn off tick labels on marginals
-	plt.setp(ax_marg_x.get_xticklabels(), visible=True)
-	plt.setp(ax_marg_y.get_yticklabels(), visible=True)
-
-	# Set labels on joint
-	ax_joint.set_ylabel(r'$D$ ($\mu$m$^2/$s)')
-	ax_joint.set_xlabel(r'$\alpha$')
-	ax_joint.spines["top"].set_visible(False)  
-	ax_joint.spines["right"].set_visible(False)
-	ax_joint.get_xaxis().tick_bottom()  
-	ax_joint.get_yaxis().tick_left()
-	ax_joint.set_yscale('log')
-	ax_joint.set_ylim(min(feat[:,1]),max(feat[:,1]))
-	plt.xticks(fontsize=10)  
-	plt.yticks(fontsize=10)
-
-
-	#MSD
-	N_T = np.shape(msd_all)[0]
-	for k in range(N_T):
-	    N=len(msd_all[k][:])
-	    t = [n*dt for n in np.linspace(1,N,N)]
-	    msd_plot.plot(t,msd_all[k][:],c=color_array[k])
+def pool_data(files,dt,minframe=5,maxframe=10000,rsquared_threshold=0.0,fit_option=2,display_id=False,dataframe=True):
+	"""This function reads the trajectories in all of the files, computes the T-MSD, performs a fit to evaluate D and alpha.
+	
+	Parameters
+	----------
+	files : list of str
+	    The list of the TrackMate CSV filenames, containing columns POSITION_X, POSITION_Y and TRACK_ID
+	dt : float
+	    time step between each position in the trajectories
+	minframe, maxframe : int 
+	    filter on the minimum / maximum number of frames per retained trajectory. Default set to respectively 5 and 10000.
+	rsquared_threshold : float <= 1
+	    filter on the minimum value for the coefficient of determination during the fit of the T-MSDs. Default is 0.0.
+	fit_option : int or list or str
+	    options for the points to consider during the fit of the T-MSD. If int, the fit is performed over the N first points. If list the fit is performed from the first element to the second. str option available: "thirty_percent". Default is 2.
+	display_id : bool, optional
+	    prints the ID of the tracks as they are being processed. Useful if the analysis is too slow. Default is disabled.
+	dataframe : bool, optional
+	    returns a DataFrame instead of a numpy array. The diffusion coefficient is directly transformed to its log10 form. Default is enabled.
 	    
-	    
-	msd_plot.set_ylabel(r"Mean square displacement ($\mu$m$^2$)")    
-	msd_plot.set_xlabel("Time lag (s)")
-	msd_plot.spines["top"].set_visible(False)  
-	msd_plot.spines["right"].set_visible(False)
-	msd_plot.get_xaxis().tick_bottom()  
-	msd_plot.get_yaxis().tick_left()
-	msd_plot.set_yscale('log')
-	msd_plot.set_xscale('log')
-	msd_plot.set_title('Mean square displacement curves for all trajectories')
-	plt.xticks(fontsize=10)  
-	plt.yticks(fontsize=10)
-
-
-	#Hist frames
-	histo_frame,bin_edge= np.histogram(nbr_frames,bins=100)
-	hist_frame.hist(nbr_frames,bins=100,range=(0, 100))
-	hist_frame.axvline(x=maxframe, ymin=0, ymax=1,linestyle="--",color="red")
-	hist_frame.axvline(x=minframe, ymin=0, ymax=1,linestyle="--",color="red")
-	hist_frame.set_xlabel('N frames')
-	hist_frame.set_ylabel('#')
-	hist_frame.text(50,max(histo_frame)/4,'Minimum number of frames = '+str(minframe))
-	hist_frame.text(50,max(histo_frame)/2,'Maximum number of frames = '+str(maxframe))
-	hist_frame.spines["top"].set_visible(False)  
-	hist_frame.spines["right"].set_visible(False)
-	hist_frame.get_xaxis().tick_bottom()  
-	hist_frame.get_yaxis().tick_left()
-	#hist_frame.xaxis.set_minor_locator(MultipleLocator(1))
-	plt.xticks(fontsize=10)  
-	plt.yticks(fontsize=10)
-
-	clustercolor = np.unique(color_array)
-	for color in clustercolor:
-		for k in range(len(color_array)):
-			if color_array[k]==color:
-				trajectories.plot(TRACKS[k][0],TRACKS[k][1],c=color)
-	trajectories.set_xticks([])
-	trajectories.set_yticks([])
-	
-	plt.subplots_adjust(wspace=0.8)
-	plt.tight_layout()
-	#plt.savefig(output_folder+"/data_characteristics.png")
-	plt.show()
-
-def mmsd_plot(timelag,mmsd,mvar):
+	Returns
+	-------
+	df
+	    a DataFrame collecting all of the generated data
+	DATA
+	    a numpy matrix containing the same information
 	"""
-	This function plots the ensemble mean for the mean square displacement, its associated experimental variance. 
 	
-	Parameters:
-	timelag<ndarray>: n values for (n*\Delta t), in order to select cutoff
-	mmsd<ndarray>: ensemble mean MSD
-	mvar<ndarray>: associated experimental variance
-	
-	Return:
-	MMSD plot.
-	
-	"""
-	plt.figure(figsize=(8, 6))
-	ax = plt.subplot(111)  
-	ax.spines["top"].set_visible(False)  
-	ax.spines["right"].set_visible(False)
-	ax.xaxis.grid(True,which='both')
-	ax.get_xaxis().tick_bottom()  
-	ax.get_yaxis().tick_left()
-	plt.xticks(fontsize=14)  
-	plt.yticks(fontsize=14)
-	plt.fill_between(timelag,[a - np.sqrt(b) for a,b in zip(mmsd,mvar)],[a + np.sqrt(b) for a,b in zip(mmsd,mvar)], color="#3F5D7D") 
-	plt.plot(timelag,mmsd,color="white", lw=2)
-	plt.ylabel(r"Mean square displacement ($\mu$m$^2$)",fontsize=16)
-	plt.xlabel('Time Lag (n)',fontsize=16)
-	plt.show()
-
-def cutoff_function(dt,N,data,timelag,mmsd,mvar):
-	cutoff = int(input("After how many time steps n do you want to cut the data? ")) # crop data 
-	if cutoff > N-1:
-		print("Your cutoff is larger than the available data !")
+	#Initial tests:
+	if isinstance(files,list)==False:
+		print("Please provide a list of TrackMate CSV files, with columns POSITION_X, POSITION_Y and TRACK_ID.")
+		return
 	else:
-		print("You have set the cutoff to a time lag of ",str(cutoff)," steps...")
+		print("Parameters for the MSD analysis: dt = ",dt) 
+		print('Initial filters: minframe = ',minframe,', maxframe = ',maxframe,', R2 threshold = ',rsquared_threshold) 
+		print("Fit option: ",fit_option)
 
-	data = data[:,:cutoff]
-	timelag = timelag[:cutoff]
-	mmsd = mmsd[:cutoff]
-	mvar = mvar[:cutoff]
-	return(data,timelag,mmsd,mvar,cutoff)
-
-def msd(t, D, alpha):
-	"""
-	Parameters:
-	D<float>: diffusion coefficient
-	alpha<float>: power exponent
-	
-	Returns:
-	4*D*t^alpha
-	"""
-	return(4*D*t**alpha)
-
-def data_pool(files,dt,minframe=5,maxframe=500,rsquared_threshold=0.8,images=[],fit_option="thirty_percent"):
-	"""
-	This function extracts trajectories from CSV files, computes the MSD curves. The MSD curves are fitted according to a 4*D*t^alpha power law, where D is the diffusion coefficient. The fit parameters are stored in the DATA list if R² > rsquared_threshold. DATA contains for each surviving track the power exponent alpha, the diffusion coefficient D, the confinement ratio c, the tracklength, the track ID, the x sequence of coordinates, the y sequence of coordinates. 
-	
-	Parameters:
-	files<list of str>: list of csv filenames which will be analyzed.
-	dt<float>: time interval bewteen two frames.
-	minframe(default=5),maxframe(default=500)<int>: minimum (and maximum) number of frames in order to keep a track and perform the analysis. 
-	rsquared_threshold(default=0.8)<float>: threshold on the accurateness of the fit. 
-	images<list of str>: list of images associated to each csv file. If the lengths do not match, the images are ignored and the cell activity is not computed. 
-	fit_option(default="thirty_percent")<str>: perform the MSD fit over 30 % of the available points ("thirty_percent") or 3 points ("3_points").
-	
-	Returns:
-	DATA<list>: contains [alpha<float>,D<float>,confinement ratio<float>,number of frames<int>,track ID,x<ndarray>,y<ndarray>,rhon<ndarray>,csv filename<str>,(cell_activity<int>)] for each retained trajectory. 
-	"""
-	
-	if len(images)!=len(files) and len(images)>0:
-		print("Warning, your image list has a length different from your data files. It will be ignored and the cell activity will not be computed.")
-
-	minalpha = 1.0E-03
-	minD = 1.0E-04
-	maxD = 4
+	#Parameters for the fit
+	minalpha = 0.1
+	minD = 1.0E-06
+	maxD = 1
 	maxalpha = 3
+	
+	def msdlog(logt, D, alpha):
+		return(alpha*logt + np.log(4*D))
 
-	msd_model = Model(msd)
+	
+	msdlog_model = Model(msdlog)
 	params = Parameters()
 	params['alpha']   = Parameter(name='alpha', value=1.0, min=minalpha,max=maxalpha)
 	params['D']   = Parameter(name='D', value=0.1, min=minD,max=maxD)
-
-	DATA = []
+	
+	#Interpret fit option that does not depend on the tracklength
+	if isinstance(fit_option, int):
+		nbrpts = fit_option
+		n0 = 0
+		
+	elif isinstance(fit_option, list):
+		nbrpts = fit_option[1]
+		n0 = fit_option[0]
+	
+	DATA = []	#Initialize the DATA output matrix
+	print("Reading filenames in ",str(files),'...')
+	
 	for p in range(len(files)):
 		filename = files[p]
-		
-		if len(images)==len(files):
-			image_file = images[p]
-			cell_activity_map = compute_mean_intensity_map(image_file)
+		print('Analysis for',filename,'...')
 		
 		data = pd.read_csv(filename) 
-		tracklist = data.TRACK_ID.unique()  #list of track ID in data
-
+		tracklist = data.TRACK_ID.unique()  #list of track IDs in the file
+		conserved_tracks=0
+		idxt=0
 		for tid in tracklist:
 
+			if display_id==True:
+				print('Track '+str(idxt)+' out of '+str(len(tracklist)))
+			
 			trackid = data["TRACK_ID"] == tid
 			x = data[trackid]["POSITION_X"].to_numpy()   #x associated to track 'tid'
 			y = data[trackid]["POSITION_Y"].to_numpy()   #y associated to track 'tid'
-
-			rhon = []
-			if len(x)<maxframe and len(x)>=minframe:
-				for n in range(1,len(x)):             #for each n = each time lag
-					s = 0
-					for i in range(0,len(x)-n):
-						s+=(x[n+i] - x[i])**2 + (y[n+i] - y[i])**2
-					rhon.append(1/(len(x)-n)*s)
-
-				N = len(rhon)+1
-				t = [n*dt for n in np.linspace(1,N-1,N-1)]
+			spotIDs = data[trackid]["ID"].to_numpy()
+			
+			N = len(x)
+			if N<=maxframe and N>=minframe:
+				tmsd,timelag = T_MSD(x,y,dt)
 				
+				#Interpret fit option
 				if fit_option=="thirty_percent":
 					nbrpts = round(0.31*N)
 					n0 = 0
-					
-				elif isinstance(fit_option, int):
-					nbrpts = fit_option
-					n0 = 0
-					
-				elif isinstance(fit_option, list):
-					nbrpts = fit_option[1]
-					n0 = fit_option[0]
 				
-				result = msd_model.fit(rhon[n0:nbrpts], params, t=t[n0:nbrpts])
-			    
-				confinement = confinement_ratio(x,y)
-
+				result = msdlog_model.fit([np.log(k) for k in tmsd[n0:nbrpts]], params, logt=[np.log(k) for k in timelag[n0:nbrpts]])
 				alpha = result.params['alpha'].value
 				D = result.params['D'].value
-				rsquare = 1 - result.residual.var() / np.var(rhon[n0:nbrpts])
-
-				if rsquare > rsquared_threshold and confinement_ratio!=0.0:
-					if len(images)==len(files):
-						
-						x_img = [xx/0.133 for xx in x]
-						y_img = [yy/0.133 for yy in y]
-						
-						line = int(y_img[0])
-						column = int(x_img[0])
-						cell_activity = cell_activity_map[line,column]
-						
-						feat = [alpha,D,confinement,len(x),tid,x,y,rhon,filename,cell_activity]
-						DATA.append(feat)
-					else:
-						feat = [alpha,D,confinement,len(x),tid,x,y,rhon,filename]
-						DATA.append(feat)
-		
-	return(DATA)
-
+				
+				N_for_R2 = round(0.6*len(tmsd)) #evaluate R2 on a third of the MSD length
+				y_true = tmsd[:N_for_R2]
+				y_pred = [4*D*ndt**alpha for ndt in timelag[:N_for_R2]]
+				rsquare = r2_score(y_true,y_pred)
+				
+				c = confinement_ratio(x,y)
+				
+				if rsquare > rsquared_threshold:
+					feat = [alpha,D,c,rsquare,N,x,y,tmsd,filename,spotIDs]
+					DATA.append(feat)
+					conserved_tracks+=1
+			idxt+=1
+		print(conserved_tracks," tracks were kept out of ",len(trackid),'. Done.')
+	
+	if dataframe==True:
+		print("Generating a DataFrame...")
+		df = pd.DataFrame(DATA,columns=['alpha', 'D', 'c','R2','N','x','y','MSD','Filename','spotIDs'])
+		df['D'] = df['D'].map(lambda x: np.log10(x))
+		print("End of the program. Returning DataFrame.")
+		return(df)
+	else:
+		print("End of the program. Returning numpy array.")
+		return(DATA)
+	
 def confinement_ratio(x,y):
-	"""
-	This function takes x, y trajectories and computes the end-to-end distance divided by the total displacement of a molecule. This ratio is called the confinement ratio. If it goes to zero then the molecule is probably confined. 
-	
-	Parameters:
-	x,y<list or ndarray> x, y trajectories
-	
-	Return:
-	c<float>: the confinement ratio, a value between 0.0 and 1.0. If the total displacement is null then c=0.0. 
-	"""
 	s=0
 	for p in range(0,len(x)-1):
 		s+= np.sqrt((x[p+1]-x[p])**2+(y[p+1]-y[p])**2)
@@ -767,206 +176,870 @@ def confinement_ratio(x,y):
 	else:
 		return(0.0)
 
+#########################################################
+######### FUNCTIONS FOR THE SPECIFIC ANALYSIS ###########
+#########################################################
 
-def two_distributions_plot(DATA1,DATA2,label1,label2,ksloop=500,title=''):
+def TE_MSD(MSD_Series,dt=0.05,cutoff=0.05,plot=True,mintracks=2,display_ntracks=False):
+	"""Takes a series of T-MSD tracks and computes an ensemble average / variance, the TE-MSD. 
+	
+	Parameters
+	----------
+	MSD_Series : list of lists/arrays
+	    series of T-MSDs associated to each tracks
+	dt : float
+	    time step between each T-MSD points
+	cutoff : float
+	    time lag at which the TE-MSD should be cut (because there not enough tracks to have a good average)
+	plot : bool
+	    plots the complete TE-MSD, the associated variance, and shows where the cutoff was set
+	mintracks : int
+	    minimum number of tracks over which the ensemble average is performed to retain a point (CLT -> 30)
+	display_ntracks : bool
+	    shows how many tracks are available at each time lag. Helps to select either a cutoff or a mintracks.
+	    
+	Returns
+	-------
+	TE-MSD
+	   The ensemble average of the T-MSDs
+	TE-VAR
+	    The associated ensemble variance
+	timelag
+	    The associated time lag'
 	"""
-	This function superimposes the alpha, D plots and distributions for two samples DATA1 and DATA2. 
 	
-	Parameters:
-	DATA1,DATA2<list> list containing the alpha parameter in its first column and the diffusion coefficient in its second column.
+	# Turn the series of T-MSDs into a square matrix
+	matrix = np.zeros([len(MSD_Series),len(max(MSD_Series,key = lambda x: len(x)))])
+	for i,j in enumerate(MSD_Series):
+		matrix[i][0:len(j)] = j
 	
-	Return:
-	Plot (alpha,D), superimposed distributions for each feature, log scale, cumulative distribution function plot. 
-	
-	"""
-	fig = plt.figure(figsize=(16, 4))
-	grid = plt.GridSpec(2, 6, hspace=0.4, wspace=0.5)
-	Dvsalpha = fig.add_subplot(grid[:,0:2])
-	distD = fig.add_subplot(grid[0,2])
-	logdistD = fig.add_subplot(grid[0,3])
-	cdfD = fig.add_subplot(grid[0,4])
-	ksD = fig.add_subplot(grid[0,5])
-	distA = fig.add_subplot(grid[1,2])
-	logdistA = fig.add_subplot(grid[1,3])
-	cdfA = fig.add_subplot(grid[1,4])
-	ksA = fig.add_subplot(grid[1,5])
-	
-	D1 = []
-	A1 = []
-	for k in range(np.shape(DATA1)[0]):
-		D1.append(DATA1[k][1])
-		A1.append(DATA1[k][0])
-    
-	D2 = []
-	A2 = []
-	for k in range(np.shape(DATA2)[0]):
-		D2.append(DATA2[k][1])
-		A2.append(DATA2[k][0])
-		
-	Dvsalpha.scatter(A1,D1,label=label1+", n = "+str(len(D1)),alpha=0.2)
-	Dvsalpha.scatter(A2,D2,label=label2+", m = "+str(len(D2)),alpha=0.2)
-	Dvsalpha.set_ylim(min(D1+D2),max(D1+D2))
-	Dvsalpha.set_yscale('log')
-	Dvsalpha.set_xlabel(r'$\alpha$')
-	Dvsalpha.set_ylabel(r'D ($\mu$m$^2/$s)')
-	Dvsalpha.spines["top"].set_visible(False)  
-	Dvsalpha.spines["right"].set_visible(False)
-	Dvsalpha.legend()
-	   
-	distD.hist(D1,bins=30,alpha=0.5,label=label1)
-	distD.hist(D2,bins=30,alpha=0.5,label=label2)
-	distD.set_xlabel('D ($\mu$m$^2/$s)')
-	distD.set_ylabel('#')
-	#distD.legend(fontsize='small')
-	distD.spines["top"].set_visible(False)  
-	distD.spines["right"].set_visible(False)
-	
-	distA.hist(A1,bins=30,alpha=0.5,label=label1)
-	distA.hist(A2,bins=30,alpha=0.5,label=label2)
-	distA.set_xlabel(r'$\alpha$')
-	distA.set_ylabel('#')
-	#distA.legend(fontsize='small')
-	distA.spines["top"].set_visible(False)  
-	distA.spines["right"].set_visible(False)	
+	#Initialize the ensemble average and variance
+	TE_MSD = []
+	TE_VAR = []
 
-	cdfD.hist(D1,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label1)
-	cdfD.hist(D2,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label2)
-	cdfD.set_xscale('log')
-	cdfD.set_xlabel('D ($\mu$m$^2/$s)')
-	cdfD.set_ylabel('CDF')
-	#cdfD.legend(fontsize='small')
-	cdfD.spines["top"].set_visible(False)  
-	cdfD.spines["right"].set_visible(False)
+	N_tracks = np.shape(matrix)[0]
+	maxlength = np.shape(matrix)[1]
 	
-	cdfA.hist(A1,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label1)
-	cdfA.hist(A2,1000, density=True, cumulative=True, histtype='step', alpha=0.8,label=label2)
-	cdfA.set_xscale('log')
-	cdfA.set_xlabel(r'$\alpha$')
-	cdfA.set_ylabel('CDF')
-	#cdfA.legend(fontsize='small')
-	cdfA.spines["top"].set_visible(False)  
-	cdfA.spines["right"].set_visible(False)
+	print("Compute the TE-MSD and ensemble variance...")
+	#Sum of all of the matrix elements column-wise.
+	for k in range(0,maxlength):
+		s1=0
+		s2=0
+		N_nonzero=0
+		for l in range(0,N_tracks):
+			if matrix[l][k]!=0.0:
+				N_nonzero+=1
+			s1+=matrix[l][k]**2
+			s2+=matrix[l][k]
+		if display_ntracks==True:
+			print("Number of T-MSDs at time lag ",str(round((k+1)*dt,2))," = ",N_nonzero)
+		if N_nonzero>=mintracks:
+			TE_VAR.append(N_nonzero/(N_nonzero-1)*(1/float(N_nonzero)*s1 - (1/float(N_nonzero)*s2)**2))
+			TE_MSD.append(1/float(N_nonzero)*s2)	
 
-	def logbin(x, bins):
-		hist, bins = np.histogram(x, bins=bins)
-		logbins = np.logspace(np.log10(bins[0]),np.log10(bins[-1]),len(bins))
-		return(logbins)
+	timelag = np.linspace(1*dt,len(TE_MSD)*dt,len(TE_MSD))
 	
+	#Check that there are enough tracks to perform a satisfying ensemble average
+	if len(TE_MSD)==0:
+		print('The number of T-MSD curves is insufficient at all time lags to properly estimate the mean and sample variance. Try to reduce mintracks. The higher the mintracks, the more the central limit theorem is satisfied.')
 	
-	logdistD.hist(D1, bins=logbin(D1,30),label=label1,alpha=0.5)
-	logdistD.hist(D2, bins=logbin(D2,30),label=label2,alpha=0.5)
-	logdistD.set_xscale('log')
-	logdistD.set_xlabel('D ($\mu$m$^2/$s)')
-	logdistD.set_ylabel('#')
-	#logdistD.legend(fontsize='small')
-	logdistD.spines["top"].set_visible(False)  
-	logdistD.spines["right"].set_visible(False)
-	
-	logdistA.hist(A1, bins=logbin(A1,30),label=label1,alpha=0.5)
-	logdistA.hist(A2, bins=logbin(A2,30),label=label2,alpha=0.5)
-	logdistA.set_xscale('log')
-	logdistA.set_xlabel(r'$\alpha$')
-	logdistA.set_ylabel('#')
-	#logdistA.legend(fontsize='small')
-	logdistA.spines["top"].set_visible(False)  
-	logdistA.spines["right"].set_visible(False)
-	
-	stat0,pvalue0 = ks_2samp(D1,D2)
-	size1,size2 = len(D1),len(D2)
-	conc = D1+D2
-	s=0
-	stat_array = []
-	for i in range(ksloop):
-		shuffled1 = partition(conc,1)[0]
-		shuffled2 = partition(conc,1)[0]
-		dist1 = shuffled1[0:size1]
-		dist2 = shuffled2[0:size2]
-		stat,pval = ks_2samp(dist1,dist2)
-		stat_array.append(stat)
-		if stat>=stat0:
-			s+=1
-	pvalue = s/ksloop
-	binsize = int(ksloop/50)
-	hist,bin_edge = np.histogram(stat_array,bins=binsize)
-	ksD.hist(stat_array,bins=binsize,alpha=0.6)
-	ksD.vlines(stat0,0,max(hist),color='r',alpha=0.6,label="p-value = "+str(round(pvalue,3)))
-	ksD.set_xlabel(r'KS statistic $D^*$')
-	ksD.set_ylabel('#')
-	ksD.spines['right'].set_visible(False)
-	ksD.spines['top'].set_visible(False)
-	props = dict(boxstyle='round', facecolor='wheat', alpha=1)
-	ksD.text(0.4, 0.8, "p-value = "+str(round(pvalue,3)), transform=ksD.transAxes, fontsize=8, verticalalignment='top', bbox=props)
-	
-	stat0,pvalue0 = ks_2samp(A1,A2)
-	size1,size2 = len(A1),len(A2)
-	conc = A1+A2
-	s=0
-	stat_array = []
-	for i in range(ksloop):
-		shuffled1 = partition(conc,1)[0]
-		shuffled2 = partition(conc,1)[0]
-		dist1 = shuffled1[0:size1]
-		dist2 = shuffled2[0:size2]
-		stat,pval = ks_2samp(dist1,dist2)
-		stat_array.append(stat)
-		if stat>=stat0:
-			s+=1
-	pvalue = s/ksloop
-	binsize = int(ksloop/50)
-	hist,bin_edge = np.histogram(stat_array,bins=binsize)
-	ksA.hist(stat_array,bins=binsize,alpha=0.6)
-	ksA.vlines(stat0,0,max(hist),color='r',alpha=0.6,label="p-value = "+str(round(pvalue,3)))
-	ksA.set_xlabel(r'KS statistic $D^*$')
-	ksA.set_ylabel('#')
-	ksA.spines['right'].set_visible(False)
-	ksA.spines['top'].set_visible(False)
-	props = dict(boxstyle='round', facecolor='wheat', alpha=1)
-	ksA.text(0.4, 0.8, "p-value = "+str(round(pvalue,3)), transform=ksA.transAxes, fontsize=8, verticalalignment='top', bbox=props)
-	#plt.tight_layout()
-	fig.suptitle(title)
-	plt.show()
-
-def compute_mean_intensity_map(filename,gauss=5,plot=False):
-	"""
-	This function takes an image, applies a gaussian filter. Then it labels individual objects detected after a segmentation step. For each object thus labeled, the function averages over the area the original pixel intensity.
-	
-	Parameters:
-	filename<str>: path of the image file.
-	gauss<float>(default=5): standard deviation for the gaussian filter.
-	plot<bool>(delfaut=False): option to show the segmented mean intensity image.
-	
-	Returns:
-	mean_intensity_map<ndarray>: matrix of the mean pixel intensity per segmented object
-	"""
-	image = mh.imread(filename)
-	imagef = mh.gaussian_filter(image,gauss)
-	imagef = imagef.astype('uint8')
-	T = mh.thresholding.otsu(imagef)
-	labeled,nr_objects = mh.label(imagef > T)
-    
-	cell_index = np.unique(labeled)
-	mean_intensity_map = np.zeros_like(image)
-
-	for lab in cell_index:
-		s=0
-		n=0
-		for i in range(np.shape(image)[0]):
-			for j in range(np.shape(image)[1]):
-				if labeled[i,j]==lab:
-					s+=image[i,j]
-					n+=1
-		meanI = s/n
-		for i in range(np.shape(image)[0]):
-			for j in range(np.shape(image)[1]):
-				if labeled[i,j]==lab:
-					mean_intensity_map[i,j]=meanI
-	if plot==True:
-		plt.imshow(mean_intensity_map)
-		plt.colorbar()
-		plt.title('Mean pixel intensity over each cell')
+	#Plot the complete TE-MSD with the cutoff position
+	if plot==True:	
+		plt.plot(timelag,TE_MSD,color='k')
+		plt.fill_between(timelag,[msd+np.sqrt(var) for msd,var in zip(TE_MSD,TE_VAR)], [msd-np.sqrt(var) for msd,var in zip(TE_MSD,TE_VAR)],color='gray',alpha=0.1)
+		plt.vlines(cutoff,plt.gca().get_ylim()[0],plt.gca().get_ylim()[1],linestyles='dashed',colors='k')
+		plt.xlabel('Time lag (s)')
+		plt.ylabel(r'TE-MSD ($\mu$m$^2$)')
 		plt.show()
-	return(mean_intensity_map)
+	
+	# if the user has set a cutoff value
+	if cutoff>0.05:
+		cut = int(cutoff/dt)
+		TE_MSD,TE_VAR,timelag = TE_MSD[:cut],TE_VAR[:cut],timelag[:cut]
+		print("You have set a cutoff at ",cutoff," s...")
+	print("Done. The TE-MSD and associated variance have been generated.")
+	return(TE_MSD,TE_VAR,timelag)
 
+def COVARIANCE(MSD_Series,dt=0.05,cutoff=0.0,plot=False):
+	"""Takes a series of T-MSD tracks and computes an ensemble covariance. 
+	
+	Parameters
+	----------
+	MSD_Series : list of lists/arrays
+	    series of T-MSDs associated to each tracks
+	dt : float
+	    time step between each T-MSD points. Default is dt=0.05 s.
+	cutoff : float
+	    time lag at which the covariance matrix should be cut (because there not enough tracks to have a good average, or the computing time might be too long.)
+	plot : bool
+	    plots the covariance map
+	
+	Returns
+	-------
+	covariance_matrix
+	   The ensemble covariance of the T-MSDs
+	timelag
+	    The associated time lag array
+	"""
+
+
+	# Turn the series of T-MSDs into a square matrix
+	matrix = np.zeros([len(MSD_Series),len(max(MSD_Series,key = lambda x: len(x)))])
+	for i,j in enumerate(MSD_Series):
+		matrix[i][0:len(j)] = j
+	
+	if cutoff==0.0:
+		cut = np.shape(matrix)[1]-2
+		print("Compute the ensemble covariance matrix with no cutoff...")
+	else:
+		cut = int(cutoff/dt)
+		print("Compute the ensemble covariance matrix with a cutoff at ",cutoff,"s...")
+	
+	covariance_matrix = np.zeros((cut,cut))
+	N_tracks = np.shape(matrix)[0]
+
+	for n in range(0,cut):
+		for m in range(0,cut):
+			s1=0
+			s2=0
+			s3=0
+			Nnonzeron=0
+			Nnonzerom=0
+			Nnonzeronm=0
+			for i in range(0,N_tracks):
+				if matrix[i][n]!=0.0 and matrix[i][m]!=0.0:
+					Nnonzeronm+=1
+				if matrix[i][n]!=0.0:
+					Nnonzeron+=1
+				if matrix[i][m]!=0.0:
+					Nnonzerom+=1
+				s1+=matrix[i][n]*matrix[i][m]
+				s2+=matrix[i][n]
+				s3+=matrix[i][m]
+			covariance_matrix[n][m] = (Nnonzeronm/(Nnonzeronm-1))*(1/float(Nnonzeronm)*s1 - 1/float(Nnonzeron)*1/float(Nnonzerom)*s2*s3)
+	
+	timelag = np.linspace(dt,dt*cut,cut)
+	if plot==True:	
+		sns.heatmap(covariance_matrix,xticklabels=[round(t,2) for t in timelag],yticklabels=[round(t,2) for t in timelag],cmap="YlGnBu")
+		plt.xlabel(r'$n \Delta t$ (s)')
+		plt.ylabel(r'$m \Delta t$ (s)')
+		fix_heatmap()
+		plt.show()
+	print("Done. The ensemble covariance matrix has been generated from the set of MSD tracks.")
+	return(covariance_matrix,timelag)
+	
+#######################################################
+############## MICHALET LINEAR MODEL ##################
+#######################################################
+
+def LINEAR_MSD(MSD_Series,D,sigma,dt=0.05,cutoff=0.05,plot=False):
+	"""Takes a series of MSD tracks of different lengths and simulates the linear model, assuming isotropic Brownian motion and that the central limit theorem is satisfied for all track lengths.  
+	
+	Parameters
+	----------
+	MSD_Series : list of lists/arrays
+	    series of T-MSDs associated to each tracks
+	D : float
+	    theoretical diffusion coefficient
+	sigma : float
+	    theoretical localization uncertainty
+	dt : float
+	    time step between each T-MSD points. Default is dt=0.05 s
+	cutoff : float
+	    time lag at which the MSD will be cut
+	plot : bool
+	    plot the modelled MSD and the associated variance
+	
+	Returns
+	-------
+	mmsd_th
+	   The modelled linear MSD
+	mvar_th
+	   The modelled variance for the MSD
+	timelag
+	    The associated time lag array
+	"""
+	print("Reading MSD tracklengths...")
+	tracklengths = [len(msd)+1 for msd in MSD_Series] #the MSDs are shorter than the trajectories by one time lag
+	
+	#Michalet parameters for the localization uncertainty
+	alpha = 4*D*dt
+	epsilon = 4*sigma**2
+	x = float(epsilon / alpha)
+
+	cut = int(cutoff/dt)
+	#Define linear MSD and timelag
+	N = len(max(MSD_Series,key = lambda x: len(x)))+1
+	N_T = len(MSD_Series)
+	
+	print("Generate linear MSD with D = ",round(D,4)," and epsilon = ",round(epsilon,3),"...")
+	timelag = np.linspace(1*dt,(N-1)*dt,N-1)
+	MSD = [4*D*t + epsilon for t in timelag]
+
+	#Compute the variance for this distribution of tracklengths
+	
+	def f(n,N,x):
+		"""
+		Intermediate step
+		This expression is derived by Michalet (2010)
+		"""
+		K = N-n
+		if n<=K:
+			fminus = n*(4*pow(n,2)*K + 2*K - pow(n,3) + n)/6/pow(K,2) + (2*n*x + (1+(1 - n/K)/2)*pow(x,2))/K
+			return(1/fminus)
+		else:
+			fplus = (6*pow(n,2)*K - 4*n*pow(K,2) + 4*n + pow(K,3) - K)/6/K + (2*n*x + pow(x,2))/K
+			return(1/fplus)
+	
+	
+	variance_ensemble=[]
+	print("Computing the the theoretical variance at each time lag for each MSD tracklength...")
+	for N in tracklengths:
+		variance_per_msd = []
+		for n in range(0,N-1):
+			variance_per_msd.append(alpha**2 / f(n+1,N,x)) #compute variance at each time lag for a MSD of length N-1 (time-variance)
+		variance_ensemble.append(variance_per_msd) #build an ensemble of variance arrays
+	
+	#Generate a square matrix for the ensemble of the variances
+	Nmax = len(max(MSD_Series,key = lambda x: len(x)))+1
+	matrix = np.zeros([N_T,Nmax])
+	for i,j in enumerate(variance_ensemble):
+		matrix[i][0:len(j)] = j
+
+	print("Performing the ensemble average of the variances associated to each MSD track...")
+	variance = []
+	# Perform the ensemble average for the variance
+	for k in range(0,Nmax-1):
+		s=0
+		N_nonzero=0
+		for l in range(0,N_T):
+			if matrix[l][k]!=0.0:
+				N_nonzero+=1
+			s+=matrix[l][k]
+		variance.append(1/float(N_nonzero)*s)
+	
+	if plot==True:	
+		plt.plot(timelag,MSD,color='k')
+		plt.fill_between(timelag,[msd+np.sqrt(var) for msd,var in zip(MSD,variance)], [msd-np.sqrt(var) for msd,var in zip(MSD,variance)],color='gray',alpha=0.1)
+		plt.vlines(cutoff,plt.gca().get_ylim()[0],plt.gca().get_ylim()[1],linestyles='dashed',colors='k')
+		plt.xlabel('Time lag (s)')
+		plt.ylabel(r'MSD ($\mu$m$^2$)')
+		plt.show()
+
+	if cutoff>0.05:
+		print("The MSD, variance and time lag arrays are cut at ",cutoff,'s...')
+		MSD,variance,timelag = MSD[:cut],variance[:cut],timelag[:cut]
+	print("Done. The linear model for the MSD and its variance have been generated.")
+	return(MSD,variance,timelag)
+
+def COVARIANCE_LINEAR_MSD(MSD_Series,D,sigma,dt=0.05,cutoff=0.0,plot=False):
+	"""Takes a series of MSD of different lengths and simulates the theoretical covariance map, assuming isotropic Brownian motion and that the central limit theorem is satisfied for all track lengths. 
+	
+	Parameters
+	----------
+	MSD_Series : list of lists/arrays
+	    series of T-MSDs associated to each tracks
+	D : float
+	    theoretical diffusion coefficient
+	sigma : float
+	    theoretical localization uncertainty
+	dt : float
+	    time step between each T-MSD points. Default is dt=0.05 s.
+	cutoff : float
+	    time lag at which the covariance matrix should be cut (because there not enough tracks to have a good average, or the computing time might be too long.)
+	plot : bool
+	    plots the covariance map
+	
+	Returns
+	-------
+	covariance_matrix
+	   The ensemble covariance of the T-MSDs
+	timelag
+	    The associated time lag array
+	"""
+	print("Reading MSD tracklengths...")
+	tracklengths = [len(msd)+1 for msd in MSD_Series]
+	
+	#Michalet parameters for the localization uncertainty
+	epsilon=4*sigma**2
+	alpha=4*D*dt
+	
+	cut = int(cutoff/dt)
+	N_T = len(tracklengths)
+	
+	def g(m,n,N,sigma,D,dt):
+		"""
+		Intermediate step
+		This expression is derived by Michalet (2010)
+		"""
+		epsilon=4*sigma**2
+		alpha=4*D*dt
+		K = N - n
+		P = N - m
+		if m<=n:
+			temp = m
+			m = n
+			n = temp
+		if m+n<=N:
+			sigmanm=n/(6*K*P)*(4*pow(n,2)*K + 2*K - pow(n,3) + n + (m-n)*(6*n*P - 4*pow(n,2) - 2))*pow(alpha,2)+1/K*(2*n*alpha*epsilon+(1-n/(2*P))*pow(epsilon,2))
+			return(sigmanm)
+		else:
+			sigmanm=1/(6*K)*(6*pow(n,2)*K - 4*n*pow(K,2)+pow(K,3)+4*n - K +(m-n)*((n+m)*(2*K+P)+2*n*P-3*pow(K,2)+1))*pow(alpha,2)+1/K*(2*n*alpha*epsilon+pow(epsilon,2)/2)
+			return(sigmanm)
+	
+	print("Compute covariance map for each track length...")
+	covariance_ensemble = []
+	for N in tracklengths:
+		covariance_per_msd = np.zeros((N-1,N-1))
+		for n in range(0,N-1):
+			for m in range(0,N-1):
+				covariance_per_msd[n,m] = g(n+1,m+1,N,sigma,D,dt)
+				covariance_per_msd[m,n] = covariance_per_msd[n,m]
+		covariance_ensemble.append(covariance_per_msd)
+
+	print("Build intermediary series of matrices cut to ",cutoff," s...")
+	temp = np.zeros((N_T,cut,cut)) #(Nloops,N-1,N-1)
+	for k in range(0,N_T):
+		length = np.shape(covariance_ensemble[k][:][:])[0]
+		if length<cut:
+			nshape=length
+		else:
+			nshape=cut
+		for n in range(0,nshape):
+			for m in range(0,nshape):
+				temp[k][n][m] = covariance_ensemble[k][n][m]
+	
+	print("Compute the ensemble average of the covariance matrices...")
+	covariance_matrix = np.zeros((cut,cut))
+	for n in range(0,cut):
+		for m in range(0,cut):
+			Nnonzero = 0
+			s=0
+			for k in range(0,N_T):
+				if temp[k][n][m]!=0.0:
+					Nnonzero+=1
+				s+=temp[k][n][m]
+			covariance_matrix[n][m]=s/float(Nnonzero)
+	
+	timelag = np.linspace(dt,dt*cut,cut)
+	if plot==True:
+		sns.heatmap(covariance_matrix,xticklabels=[round(t,2) for t in timelag],yticklabels=[round(t,2) for t in timelag],cmap="YlGnBu")
+		plt.xlabel(r'$n \Delta t$ (s)')
+		plt.ylabel(r'$m \Delta t$ (s)')
+		fix_heatmap()
+		plt.show()
+	print("Done. The ensemble covariance matrix has been generated from the set of MSD tracks.")
+	return(covariance_matrix,timelag)
+	
+def WLS_MSD_SLOPE_ERROR(D,sigma,variance,covariance,dt=0.05):
+	"""The function computes the relative error on the slope of a weighted least square fit of the MSD characterized by a variance array and a covariance matrix (sigma_b/b in Michalet's paper). The variance / covariance can be determined in any way, as long as their sizes are compatible (list length k, matrix (k,k)). Estimates for D and sigma are required for the scaling.
+	
+	Parameters
+	----------
+	D : float
+	    estimate for the diffusion coefficient
+	sigma : float
+	    estimate for the localization uncertainty
+	dt : float
+	    time step between each MSD point. Default is dt=0.05 s.
+	variance : list or ndarray
+	    variance array associated to the MSD studied
+	covariance : 2D list or 2D ndarray
+	    covariance associtaed to the MSD
+	
+	Returns
+	-------
+	error_on_slope
+	   The relative error on the slope as computed by weigthed least-square on the MSD.
+	fit_points
+	    The associated array of number of fitting points (first 2,3,...,k points to perform the WLS fit)
+	"""
+	lencov = np.shape(covariance)[0]
+	if len(variance)!=lencov:
+		print("The size of your variance does not match with the shape of your covariance matrix. Abort.")
+		return
+	
+	cut = len(variance)
+	fit_points = [int(p) for p in np.linspace(2,cut-2,cut-3)]
+	error_on_slope = []
+	print("The error on the slope is computed for each number of fitting points, based on the provided variance and covariance. The method used is weighted least squares...")
+	for p in fit_points:
+		alpha = 4*D*dt
+		epsilon = 4*sigma**2
+		x = float(epsilon / alpha)
+		sum0=0
+		sum1=0
+		sum2=0
+		sumh0=0
+		sumh1=0
+		sumh2=0
+		for i in range(1,p+1):
+			fi = alpha**2 / variance[i-1]
+			sum0+=fi
+			sum1+=i*fi
+			sum2+=i**2*fi
+			h0=0
+			h1=0
+			for j in range(1,i):
+				fj = alpha**2 / variance[j-1]
+				gij = covariance[i-1][j-1]/alpha**2
+				hij = fi*fj*gij
+				h0+=hij
+				h1+=j*hij
+			sumh0+=h0
+			sumh1+=i*h0 + h1
+			sumh2+=i*h1
+		delta = sum0*sum2 - sum1**2
+		temp = 1/delta*(sum0 + 2*(sum1**2*sumh0 - sum0*sum1*sumh1 + sum0**2*sumh2)/delta)
+		if temp<0.0:
+			print("Warning! Your square of the relative error is negative for p = ",p," fitting points...")
+		norm_sigmab = np.sqrt(temp)
+		error_on_slope.append(norm_sigmab)
+	print("Done. The relative error for each number of fitting points has been computed.")
+	min_y = min(error_on_slope) 
+	min_x = fit_points[error_on_slope.index(min_y)]
+	print("The relative error on the slope is minimum for P = ",min_x,"fitting points.")
+	return(error_on_slope,fit_points)
+	
+	
+def WLS_MSD_INTERCEPT_ERROR(D,sigma,variance,covariance,dt=0.05):
+	"""The function computes the relative error on the intercept of a weighted least square fit of the MSD characterized by a variance array and a covariance matrix (sigma_b/b in Michalet's paper). The variance / covariance can be determined in any way, as long as their sizes are compatible (list length k, matrix (k,k)). Estimates for D and sigma are required for the scaling.
+	
+	Parameters
+	----------
+	D : float
+	    estimate for the diffusion coefficient
+	sigma : float
+	    estimate for the localization uncertainty
+	dt : float
+	    time step between each MSD point. Default is dt=0.05 s.
+	variance : list or ndarray
+	    variance array associated to the MSD studied
+	covariance : 2D list or 2D ndarray
+	    covariance associtaed to the MSD
+	
+	Returns
+	-------
+	error_on_intercept
+	   The relative error on the intercept as computed by weigthed least-square on the MSD.
+	fit_points
+	    The associated array of number of fitting points (first 2,3,...,k points to perform the WLS fit)
+	"""
+	lencov = np.shape(covariance)[0]
+	if len(variance)!=lencov:
+		print("The size of your variance does not match with the shape of your covariance matrix. Abort.")
+		return
+	
+	cut = len(variance)
+	fit_points = [int(p) for p in np.linspace(2,cut-2,cut-3)]
+	error_on_intercept = []
+	print("The error on the intercept is computed for each number of fitting points, based on the provided variance and covariance. The method used is weighted least squares...")
+	for p in fit_points:
+		alpha = 4*D*dt
+		epsilon = 4*sigma**2
+		x = float(epsilon / alpha)
+		sum0=0
+		sum1=0
+		sum2=0
+		sumh0=0
+		sumh1=0
+		sumh2=0
+		for i in range(1,p+1):
+			fi = alpha**2 / variance[i-1]
+			sum0+=fi
+			sum1+=i*fi
+			sum2+=i**2*fi
+			h0=0
+			h1=0
+			for j in range(1,i):
+				fj = alpha**2 / variance[j-1]
+				gij = covariance[i-1][j-1]/alpha**2
+				hij = fi*fj*gij
+				h0+=hij
+				h1+=j*hij
+			sumh0+=h0
+			sumh1+=i*h0 + h1
+			sumh2+=i*h1
+		delta = sum0*sum2 - sum1**2
+		temp = 1/delta*(sum2 + 2*(sum2**2*sumh0 - sum1*sum2*sumh1 + sum1**2*sumh2)/delta)
+		if temp<0.0:
+			print("Warning! Your square of the relative error is negative for p = ",p," fitting points...")
+		norm_sigmaa = np.sqrt(temp)/x
+		error_on_intercept.append(norm_sigmaa)
+	print("Done. The relative error for each number of fitting points has been computed.")
+	min_y = min(error_on_intercept) 
+	min_x = fit_points[error_on_intercept.index(min_y)]
+	print("The relative error on the intercept is minimum for P = ",min_x,"fitting points.")
+	return(error_on_intercept,fit_points)
+
+
+def Michalet(MSD_Series,dt=0.05,cutoff=0.0,theoretical_estimate=False,experiment_name='Simulation'):
+	"""This functions takes a series of MSD curves and perform an ensemble analysis over these curves. It computes the TE-MSD, the associated variance and covariance. It evaluates the error on the fit of the TE-MSD to obtain optimal values for D (diffusion coefficient) and sigma (localization uncertainty). Once a first estimate for D and sigma has been obtained, it performs the whole process again to ensure that D and sigma have converged and to calibrate the matching theoretical linear model. 
+	
+	Parameters
+	----------
+	MSD_Series : list of lists/arrays
+	    series of T-MSDs associated to each tracks
+	dt : float
+	    time step between each MSD point. Default is dt=0.05 s.
+	cutoff : float (multiple of dt)
+	    maximum time lag at which the analysis is performed 
+	theoretical_estimate : bool
+	    if true, use the theoretical variance to estimate the error on D and sigma, instead of the "ensemble" one. Useful if there is not enough data to satisfy the central limit theorem. 
+	output : str
+	    name for the output filename that will be stored in folder Plots/ as michalet_<output>.pdf
+	   
+	
+	Returns
+	-------
+	error_on_intercept
+	   The relative error on the intercept as computed by weigthed least-square on the MSD.
+	fit_points
+	    The associated array of number of fitting points (first 2,3,...,k points to perform the WLS fit)
+	"""
+
+
+	print("#############################################")
+	print("############## PROGRAM MICHALET #############")
+	print("#############################################")
+	
+	#Set any initial value, they will be adjusted...
+	sigma=0.3
+	D = 0.07
+	epsilon = 4*sigma**2
+	alpha = 4*D*dt
+	
+	if cutoff==0.0:
+		print("No cutoff has been defined. Setting the cut at the maximum time lag.")
+		cutoff = len(max(MSD_Series,key = lambda x: len(x)))*dt
+	
+	mmsd,mvar,timelag = TE_MSD(MSD_Series,cutoff=cutoff,plot=False,display_ntracks=True,dt=dt)
+	covar,timelag = COVARIANCE(MSD_Series,cutoff=cutoff,dt=dt)
+	
+	for iteration in range(2):
+		if iteration==0:
+			print("Initial run to determine the best theoretical values for D and sigma.")
+		if iteration==1:
+			print("Second run with accurate values for D and sigma.")
+
+		mmsd_th,mvar_th,timelag = LINEAR_MSD(MSD_Series,D,sigma,cutoff=cutoff,dt=dt)
+		covar_th,timelag = COVARIANCE_LINEAR_MSD(MSD_Series,D,sigma,cutoff=cutoff,dt=dt)
+		
+		error_slope_exp,p_array = WLS_MSD_SLOPE_ERROR(D,sigma,mvar,covar)
+		error_slope_th,p_array = WLS_MSD_SLOPE_ERROR(D,sigma,mvar_th,covar_th)
+
+		min_y = min(error_slope_exp) 
+		min_x = p_array[error_slope_exp.index(min_y)]
+		
+		if iteration==1 and theoretical_estimate==True:
+			min_y = min(error_slope_th) 
+			min_x = p_array[error_slope_th.index(min_y)]
+
+		if iteration==0:
+			print("It is estimated that the lowest error will be for a number of fitting points P = ",min_x," for which the relative error sigma_b / b = ",min_y)
+		
+		#Perform the fit of the MSD using the optimal number of points, and recovering an estimate for the slope
+		timelag = np.array(timelag)
+		x = timelag.reshape((-1, 1))
+		y = mmsd
+		ctffb = int(min_x)
+		model = LinearRegression().fit(x[:ctffb], y[:ctffb])
+		r_sq = model.score(x[:ctffb], y[:ctffb])
+		fit_b = model.predict(x)
+
+		# D is the slope / 4 and sigma_b / b = sigma_D / D...
+		Dvalue = round(model.coef_[0]/4,4) 
+		Dvalue_error = round(min_y*model.coef_[0]/4,4)
+		print("D = ",Dvalue," +- ",Dvalue_error)
+		
+		error_intercept_exp,p_array = WLS_MSD_INTERCEPT_ERROR(D,sigma,mvar,covar)
+		error_intercept_th,p_array = WLS_MSD_INTERCEPT_ERROR(D,sigma,mvar_th,covar_th)
+
+		min_y = min(error_intercept_exp) 
+		min_x = p_array[error_intercept_exp.index(min_y)]
+
+		if iteration==1 and theoretical_estimate==True:
+			min_y = min(error_intercept_th) 
+			min_x = p_array[error_intercept_th.index(min_y)]
+
+		if iteration==0:
+			print("It is estimated that the lowest error will be when the number of fitting points P = ",min_x," for which the relative error sigma_a/a = ",min_y)
+
+		#Perform the fit of the MSD using the optimal number of points, and recovering an estimate for the intercept
+		timelag = np.array(timelag)
+		xa = timelag.reshape((-1, 1))
+		ya = mmsd
+		ctffa = int(min_x)
+		model = LinearRegression().fit(x[:ctffa], y[:ctffa])
+		r_sq = model.score(x[:ctffa], y[:ctffa])
+		fit_a = model.predict(x)
+
+		# sigma is SQRT(epsilon/4) and epsilon is the intercept...
+		loc_sigma = round(1/2*np.sqrt(model.intercept_+model.coef_[0]*0.05/3),4)
+		loc_sigma_error = round(min_y/2*model.intercept_,4)
+		print("sigma = ",loc_sigma,"+-",loc_sigma_error)
+
+		D = Dvalue
+		if np.isnan(loc_sigma)==True:
+			print("sigma is nan. The square was probably negative. Replace with value arbitrarily close to zero.")
+			sigma = 0.0000001
+		else:
+			sigma = loc_sigma
+
+		epsilon = 4*sigma**2
+		alpha = 4*D*dt
+		if iteration==1:
+			print("Done.")
+			print("#############################################")
+			print("####### GENERATING ALL OF THE PLOTS #########")
+			print("#############################################")
+			
+	############## GLOBAL PLOT ###################################"
+
+	fig = plt.figure(figsize=(16, 9))
+	grid = plt.GridSpec(3, 4, hspace=0.4, wspace=0.5)
+	msd_plot = fig.add_subplot(grid[0:2,0:2])
+	cov_exp = fig.add_subplot(grid[2,0])
+	cov_th  = fig.add_subplot(grid[2,1])
+	frames_hist = fig.add_subplot(grid[0,2:4])
+	slope_error_plot = fig.add_subplot(grid[1,2])
+	intercept_error_plot = fig.add_subplot(grid[1,3])
+	optimal_fit_D = fig.add_subplot(grid[2,2])
+	optimal_fit_sigma = fig.add_subplot(grid[2,3])
+
+	cexp = "#3e66b5"
+	cth  = "#cf5c50"
+	msize = 3.0
+
+	######## MSD SUBPLOT #######################
+	msd_plot.spines["top"].set_visible(False)  
+	msd_plot.spines["right"].set_visible(False)
+	msd_plot.get_xaxis().tick_bottom()  
+	msd_plot.get_yaxis().tick_left()
+	msd_plot.fill_between(timelag,[a - np.sqrt(b) for a,b in zip(mmsd,mvar)],[a + np.sqrt(b) for a,b in zip(mmsd,mvar)], color="#b3d1ff",alpha=0.5)
+	msd_plot.fill_between(timelag,[a - np.sqrt(b) for a,b in zip(mmsd_th,mvar_th)],[a + np.sqrt(b) for a,b in zip(mmsd_th,mvar_th)], color="#febab3",alpha=0.5) 
+	msd_plot.plot(timelag,mmsd,color=cexp, lw=2,label="Experimental MSD $\pm \sigma $")
+	msd_plot.plot(timelag,mmsd_th,color=cth, lw=2,label="Theoretical MSD $\pm \sigma $")
+	msd_plot.set_ylabel(r"Mean square displacement ($\mu$m$^2$)",fontsize=10)
+	msd_plot.set_xlabel('Time lag (s)',fontsize=10)
+	msd_plot.legend(loc="upper left",fontsize=10)
+
+	########## HISTOGRAM ########################"
+	N_array = [len(msd)+1 for msd in MSD_Series]
+	frames_hist.spines["top"].set_visible(False)  
+	frames_hist.spines["right"].set_visible(False)
+	frames_hist.get_xaxis().tick_bottom()  
+	frames_hist.get_yaxis().tick_left()
+	hist_array = [n*dt for n in N_array]
+	frames_hist.hist(hist_array,color=cexp)
+	frames_hist.axvline(cutoff, 0, max(hist_array),color=cth)
+	frames_hist.set_xlabel('Track duration (s)',fontsize=10)
+	frames_hist.set_ylabel('Number of tracks',fontsize=10)
+
+	######## COVARIANCE #############################
+
+	im1 = cov_exp.pcolormesh(timelag,timelag,covar,cmap="Blues")
+	cov_exp.set_xlabel(r'$n \Delta t$')
+	cov_exp.set_ylabel(r'$m \Delta t$')
+	cbar = plt.colorbar(im1,ax=cov_exp)
+	#plt.title('Map of experimental covariance values')
+
+	im2 = cov_th.pcolormesh(timelag,timelag,covar_th,cmap="Reds")
+	#cov_th.colorbar()
+	cov_th.set_xticks([])
+	cov_th.set_yticks([])
+	cov_th.set_xlabel(r'$n \Delta t$')
+	cov_th.set_ylabel(r'$m \Delta t$')
+	cbar = plt.colorbar(im2,ax=cov_th)
+	#cov_th.set_title('Map of theoretical covariance values')
+
+
+	############## ERRORS ###################################
+	slope_error_plot.spines["top"].set_visible(False)  
+	slope_error_plot.spines["right"].set_visible(False)
+	slope_error_plot.get_xaxis().tick_bottom()  
+	slope_error_plot.get_yaxis().tick_left()
+	slope_error_plot.loglog(p_array,error_slope_th,label="Theory",color=cth)
+	slope_error_plot.loglog(p_array,error_slope_exp,"-x",label="Experiment",color=cexp,ms=msize)
+	slope_error_plot.set_xlabel('Number of fitting points $P$')
+	slope_error_plot.set_ylabel(r'$\sigma_b / b$')
+	slope_error_plot.legend(fontsize=8)
+
+	intercept_error_plot.spines["top"].set_visible(False)  
+	intercept_error_plot.spines["right"].set_visible(False)
+	intercept_error_plot.get_xaxis().tick_bottom()  
+	intercept_error_plot.get_yaxis().tick_left()
+	intercept_error_plot.loglog(p_array,error_intercept_th,label="Theory",color=cth)
+	intercept_error_plot.loglog(p_array,error_intercept_exp,"-x",label="Experiment",color=cexp,ms=msize)
+	intercept_error_plot.set_xlabel('Number of fitting points $P$')
+	intercept_error_plot.set_ylabel(r'$\sigma_a / a$')
+	intercept_error_plot.legend(fontsize=8)
+
+	############" LINEAR FITS ######################################
+	optimal_fit_D.spines["top"].set_visible(False)  
+	optimal_fit_D.spines["right"].set_visible(False)
+	optimal_fit_D.get_xaxis().tick_bottom()  
+	optimal_fit_D.get_yaxis().tick_left()
+	optimal_fit_D.plot(x, fit_b,"-x",label=r'$P = $'+str(ctffb),color="purple",ms=msize)
+	optimal_fit_D.plot(timelag,mmsd,"-x",label="Exp.",color=cexp,ms=msize)
+	optimal_fit_D.plot(timelag,mmsd_th,label="Th.",color=cth)
+	optimal_fit_D.legend(loc="upper left",fontsize=8)
+	optimal_fit_D.set_xlabel('Timelag (s)')
+	optimal_fit_D.set_ylabel(r'MSD ($\mu$m$^2$)')
+	ymin, ymax = optimal_fit_D.get_ylim()
+	optimal_fit_D.text(max(timelag)/5,ymin,r'$D = ($'+str(Dvalue)+"$\pm$"+str(Dvalue_error)+") $\mu m^2 / s$",color="purple",fontsize=8)
+
+	optimal_fit_sigma.spines["top"].set_visible(False)  
+	optimal_fit_sigma.spines["right"].set_visible(False)
+	optimal_fit_sigma.get_xaxis().tick_bottom()  
+	optimal_fit_sigma.get_yaxis().tick_left()
+	optimal_fit_sigma.plot(x, fit_a,"-x",label=r'$P = $'+str(ctffa),color="purple",ms=msize)
+	optimal_fit_sigma.plot(timelag,mmsd,"x-",label="Exp.",color=cexp,ms=msize)
+	optimal_fit_sigma.plot(timelag,mmsd_th,label="Th.",color=cth)
+	optimal_fit_sigma.legend(loc="upper left",fontsize=8)
+	optimal_fit_sigma.set_xlabel('Timelag (s)')
+	optimal_fit_sigma.set_ylabel(r'MSD ($\mu$m$^2$)')
+	ymin, ymax = optimal_fit_sigma.get_ylim()
+	optimal_fit_sigma.text(max(timelag)/3,ymin,r'$\sigma_0 = ($'+str(loc_sigma)+"$\pm$"+str(loc_sigma_error)+") $\mu$m$^2$",color="purple",fontsize=8)
+
+	plt.show()
+	
+	width = 469.75502
+	fig= plt.figure(figsize=set_size(width, fraction=1))
+	grid = plt.GridSpec(3, 4, wspace=1.2, hspace=0.9,bottom=0.2)
+	msd_plot = fig.add_subplot(grid[0:2,0:2])
+	cov_exp = fig.add_subplot(grid[2,0])
+	cov_th  = fig.add_subplot(grid[2,1])
+	slope_error_plot = fig.add_subplot(grid[0,2:4])
+	intercept_error_plot = fig.add_subplot(grid[1,2:4])
+	optimal_fit_D = fig.add_subplot(grid[2,2])
+	optimal_fit_sigma = fig.add_subplot(grid[2,3])
+
+	cexp = "tab:blue"
+	cth  = "tab:red"
+	msize = 2
+
+	######## MSD SUBPLOT #######################
+	msd_plot.spines["top"].set_visible(False)  
+	msd_plot.spines["right"].set_visible(False)
+	msd_plot.get_xaxis().tick_bottom()  
+	msd_plot.get_yaxis().tick_left()
+	msd_plot.fill_between(timelag,[a - np.sqrt(b) for a,b in zip(mmsd,mvar)],[a + np.sqrt(b) for a,b in zip(mmsd,mvar)], color="#b3d1ff",alpha=0.5)
+	msd_plot.fill_between(timelag,[a - np.sqrt(b) for a,b in zip(mmsd_th,mvar_th)],[a + np.sqrt(b) for a,b in zip(mmsd_th,mvar_th)], color="#febab3",alpha=0.5) 
+	msd_plot.plot(timelag,mmsd,color=cexp, lw=2,label=experiment_name)
+	msd_plot.plot(timelag,mmsd_th,color=cth, lw=2,label="Theory")
+	msd_plot.set_ylabel(r"TE-MSD ($\mu$m$^2$)")
+	msd_plot.set_xlabel('Time lag (s)')
+	msd_plot.legend(loc="upper left")
+
+	########## HISTOGRAM ########################"
+	N_array = [len(msd)+1 for msd in MSD_Series]
+	#hist.spines["top"].set_visible(False)  
+	#hist.spines["right"].set_visible(False)
+	#hist.get_xaxis().tick_bottom()  
+	#hist.get_yaxis().tick_left()
+	#hist_array = [n*dt for n in N_array]
+	#hist.hist(hist_array,color=cexp, bins=int(len(N_array)))
+	#hist.axvline(cutoff/dt, 0, max(hist_array),color=cth)
+	#hist.set_xlabel('Track duration (s)',fontsize=10)
+	#hist.set_ylabel('Number of tracks',fontsize=10)
+
+	######## COVARIANCE #############################
+
+	im1 = cov_exp.pcolormesh(timelag,timelag,covar,cmap="Blues")
+	cov_exp.set_xlabel(r'$n \Delta t$')
+	cov_exp.set_ylabel(r'$m \Delta t$')
+	cov_exp.set_xticks([])
+	cov_exp.set_yticks([])
+	cbar = plt.colorbar(im1,ax=cov_exp)
+	cbar.ax.tick_params(labelsize=8)
+	#plt.title('Map of experimental covariance values')
+	#cov_exp.text(0,-1.5,'Covariance maps')
+
+	im2 = cov_th.pcolormesh(timelag,timelag,covar_th,cmap="Reds")
+	#cov_th.colorbar()
+	cov_th.set_xticks([])
+	cov_th.set_yticks([])
+	cov_th.set_xlabel(r'$n \Delta t$')
+	cov_th.set_ylabel(r'$m \Delta t$')
+	cbar = plt.colorbar(im2,ax=cov_th)
+	cbar.ax.tick_params(labelsize=8)
+
+	############## ERRORS ###################################
+	slope_error_plot.spines["top"].set_visible(False)  
+	slope_error_plot.spines["right"].set_visible(False)
+	slope_error_plot.loglog(p_array,error_slope_th,label="Theory",color=cth)
+	slope_error_plot.loglog(p_array,error_slope_exp,"-x",label="Experiment",color=cexp,ms=msize)
+	slope_error_plot.set_xlabel('Number of fitting points')
+	slope_error_plot.set_ylabel(r'$\sigma_b / b$')
+	slope_error_plot.tick_params(axis='both', which='major', labelsize=8)
+	slope_error_plot.tick_params(axis='both', which='minor', labelsize=8)
+	slope_error_plot.xaxis.set_minor_formatter(mticker.ScalarFormatter())
+	slope_error_plot.yaxis.set_minor_formatter(mticker.ScalarFormatter())
+	slope_error_plot.xaxis.set_major_formatter(mticker.ScalarFormatter())
+	slope_error_plot.yaxis.set_major_formatter(mticker.ScalarFormatter())
+	slope_error_plot.yaxis.set_minor_locator(plt.MaxNLocator(2))
+	slope_error_plot.xaxis.set_minor_locator(plt.MaxNLocator(5))
+	#sigmab_err.legend(fontsize=8)
+
+	intercept_error_plot.spines["top"].set_visible(False)  
+	intercept_error_plot.spines["right"].set_visible(False)
+	#sigmaa_err.get_xaxis().tick_bottom()  
+	#sigmaa_err.get_yaxis().tick_left()
+	intercept_error_plot.loglog(p_array,error_intercept_th,label="Theory",color=cth)
+	intercept_error_plot.loglog(p_array,error_intercept_exp,"-x",label="Experiment",color=cexp,ms=msize)
+	intercept_error_plot.set_xlabel('Number of fitting points')
+	intercept_error_plot.set_ylabel(r'$\sigma_a / a$')
+	intercept_error_plot.tick_params(axis='both', which='major', labelsize=8)
+	intercept_error_plot.tick_params(axis='both', which='minor', labelsize=8)
+	intercept_error_plot.xaxis.set_minor_formatter(mticker.ScalarFormatter())
+	intercept_error_plot.yaxis.set_minor_formatter(mticker.ScalarFormatter())
+	intercept_error_plot.xaxis.set_major_formatter(mticker.ScalarFormatter())
+	intercept_error_plot.yaxis.set_major_formatter(mticker.ScalarFormatter())
+	intercept_error_plot.yaxis.set_minor_locator(plt.MaxNLocator(2))
+	intercept_error_plot.xaxis.set_minor_locator(plt.MaxNLocator(5))
+	#sigmaa_err.set_xticklabels([2,10])
+	#sigmaa_err.legend(fontsize=8)
+
+	############" LINEAR FITS ######################################
+	optimal_fit_D.spines["top"].set_visible(False)  
+	optimal_fit_D.spines["right"].set_visible(False)
+	optimal_fit_D.get_xaxis().tick_bottom()  
+	optimal_fit_D.get_yaxis().tick_left()
+	optimal_fit_D.plot(x, fit_b,"--",label=r'$P = $'+str(ctffb),color="tab:purple",linewidth=1)
+	optimal_fit_D.plot(timelag,mmsd,"-x",color=cexp,ms=msize,linewidth=0.5)
+	#D_plot.plot(timelag,mmsd_th,label="Th.",color=cth)
+	optimal_fit_D.legend(loc="upper left",fontsize=6)
+	optimal_fit_D.set_xlabel('Time lag (s)',fontsize=8)
+	optimal_fit_D.set_ylabel(r'TE-MSD ($\mu$m$^2$)',fontsize=8)
+	optimal_fit_D.yaxis.set_label_position("left")
+	optimal_fit_D.set_yticklabels([])
+	optimal_fit_D.tick_params(axis='both', which='major', labelsize=8)
+	optimal_fit_D.tick_params(axis='both', which='minor', labelsize=8)
+
+	#D_plot.text(max(timelag)/5,max(mmsd)/10,r'$D = ($'+str(Dvalue)+"$\pm$"+str(Dvalue_error)+") $\mu m^2 / s$",color="k",fontsize=3)
+
+	optimal_fit_sigma.spines["top"].set_visible(False)  
+	optimal_fit_sigma.spines["right"].set_visible(False)
+	optimal_fit_sigma.get_xaxis().tick_bottom()  
+	optimal_fit_sigma.get_yaxis().tick_left()
+	optimal_fit_sigma.plot(x, fit_a,"--",label=r'$P = $'+str(ctffa),color="tab:purple",linewidth=1)
+	optimal_fit_sigma.plot(timelag,mmsd,"x-",color=cexp,ms=msize,linewidth=0.5)
+	#loc_unc_plot.plot(timelag,mmsd_th,label="Th.",color=cth)
+	optimal_fit_sigma.legend(loc="upper left",fontsize=6)
+	optimal_fit_sigma.set_xlabel('Time lag (s)',fontsize=8)
+	optimal_fit_sigma.tick_params(axis='both', which='major', labelsize=8)
+	optimal_fit_sigma.tick_params(axis='both', which='minor', labelsize=8)
+	#loc_unc_plot.set_ylabel(r'MSD ($\mu$m$^2$)')
+	#loc_unc_plot.yaxis.set_label_position("right")
+	#loc_unc_plot.yaxis.tick_right()
+	#loc_unc_plot.text(max(timelag)/3,max(mmsd)/10,r'$\sigma_0 = ($'+str(loc_sigma)+"$\pm$"+str(loc_sigma_error)+") $\mu$m$^2$",color="k",fontsize=3)
+
+	plt.suptitle(r'$D =$ ('+str(Dvalue)+"$\pm$"+str(Dvalue_error)+") $\mu$m$^2/$s,"+' $\sigma = ($'+str(loc_sigma)+"$\pm$"+str(loc_sigma_error)+") $\mu$m")
+	plt.tight_layout()
+	
+	
+	return(Dvalue,Dvalue_error,loc_sigma,loc_sigma_error)
 
 def partition(list_in, n):
 	"""
@@ -981,34 +1054,6 @@ def partition(list_in, n):
 	"""
 	random.shuffle(list_in)
 	return([list_in[i::n] for i in range(n)])
-
-def ecdf(data):
-	"""
-	This function computes the empirical cumulative distribution function for a set of data. 
-	Parameters:
-	data<ndarray>: list of values
-	Returns:
-	x_values<ndarray>: bins coordinates for the ECDF
-	y_values<ndarray>: ECDF values
-	"""
-	# create a sorted series of unique data
-	cdfx = np.sort(np.unique(data))
-	# x-data for the ECDF: evenly spaced sequence of the uniques
-	x_values = np.linspace(start=min(cdfx),stop=max(cdfx),num=len(cdfx))
-	# size of the x_values
-	size_data = data.size
-	# y-data for the ECDF:
-	y_values = []
-	for i in x_values:
-		# all the values in raw data less than the ith value in x_values
-		temp = data[data <= i]
-		# fraction of that value with respect to the size of the x_values
-		value = temp.size / size_data
-		# pushing the value in the y_values
-		y_values.append(value)
-	# return both x and y values    
-	return(x_values,y_values)
-
 
 
 def kolmogorov_smirnov(dist1,dist2,nloop=1000,plot=False):
@@ -1054,164 +1099,51 @@ def kolmogorov_smirnov(dist1,dist2,nloop=1000,plot=False):
 		plt.show()
 	return(stat0,pvalue)
 
-def KS_MAP(data,nbins,filter_dist='A',dist_for_ks='D',ksloops=3000):
-	
-	A1,D1,C1,I1 = [],[],[],[]
-	for k in range(np.shape(data)[0]):
-		A1.append(data[k][0])
-		D1.append(np.log10(data[k][1]))
-		C1.append(data[k][2])
-		I1.append(data[k][7])
-	
-	if filter_dist=='A':
-		F = A1
-	elif filter_dist=='I':
-		F = I1
-	elif filter_dist=='C':
-		F = C1
-	elif filter_dist == 'D':
-		F = D1
-		
-	if dist_for_ks=='A':
-		dist = A1
-	elif dist_for_ks=='I':
-		dist = I1
-	elif dist_for_ks=='C':
-		dist = C1
-	elif dist_for_ks == 'D':
-		dist = D1
-	
-	df = (max(F)-min(F))/nbins
-	filter_windows = np.linspace(min(F),max(F)-df,nbins)
-
-	fig, (ax1, ax2) = plt.subplots(1, 2)
-	ax1.hist(F,bins=nbins)
-	ax1.set_xlabel(filter_dist)
-	ax1.set_title('Histogram for the filter feature')
-	
-	ax2.hist(dist,bins=nbins)
-	ax2.set_xlabel(dist_for_ks)
-	ax2.set_title("Histogram for the tested distribution")
-	plt.show()
-
-	ks_matrix = np.zeros((len(filter_windows),len(filter_windows)))
-	
-	for j in range(len(filter_windows)):
-		for i in range(j,len(filter_windows)):
-			window_low1 = filter_windows[i]
-			window_low2 = filter_windows[j]
-
-			dist1 = []
-			dist2 = []
-
-			for k in range(len(F)):
-				filter_param = F[k]
-				test_value = dist[k]
-			    
-				if window_low1 <= filter_param <= window_low1 + df:
-					dist1.append(test_value)
-				if window_low2 <= filter_param <= window_low2 + df:
-					dist2.append(test_value)
 
 
-			stat,pvalue = kolmogorov_smirnov(dist1,dist2,nloop=ksloops,plot=False)
-			ks_matrix[i][j] = pvalue
-			ks_matrix[j][i] = ks_matrix[i][j]
-			
-	return(ks_matrix,filter_windows)
-	
-	
-def KS_MAP_2SAMP(data1,data2,nbins,filter_dist='A',dist_for_ks='D',ksloops=3000):
-	
-	A1,D1,C1,I1 = [],[],[],[]
-	A2,D2,C2,I2 = [],[],[],[]
-	
-	for k in range(np.shape(data1)[0]):
-		A1.append(data1[k][0])
-		D1.append(np.log10(data1[k][1]))
-		C1.append(data1[k][2])
-		I1.append(data1[k][7])
-	
-	for k in range(np.shape(data2)[0]):
-		A2.append(data2[k][0])
-		D2.append(np.log10(data2[k][1]))
-		C2.append(data2[k][2])
-		I2.append(data2[k][7])
-	
-	if filter_dist=='A':
-		F1 = A1
-		F2 = A2
-	elif filter_dist=='I':
-		F1 = I1
-		F2 = I2
-	elif filter_dist=='C':
-		F1 = C1
-		F2 = C2
-	elif filter_dist == 'D':
-		F1 = D1
-		F2 = D2
-		
-	if dist_for_ks=='A':
-		distri1 = A1
-		distri2 = A2
-	elif dist_for_ks=='I':
-		distri1 = I1
-		distri2 = I2
-	elif dist_for_ks=='C':
-		distri1 = C1
-		distri2 = C2
-	elif dist_for_ks == 'D':
-		distri1 = D1
-		distri2 = D2
-	minimum = max([min(F1),min(F2)])
-	maximum = min([max(F1),max(F2)])
-	df = (maximum-minimum)/nbins
-	print("Width of the filter window = ",df)
-	filter_windows = np.linspace(minimum,maximum-df,nbins)
+#######################################################
+############## PLOT FUNCTIONS #########################
+#######################################################
 
-	fig, (ax1, ax2) = plt.subplots(1, 2)
-	ax1.hist(F1,bins=nbins)
-	ax1.hist(F2,bins=nbins)
-	ax1.set_xlabel(filter_dist)
-	ax1.set_title('Histogram for the filter feature')
-	
-	ax2.hist(distri1,bins=nbins)
-	ax2.hist(distri2,bins=nbins)
-	ax2.set_xlabel(dist_for_ks)
-	ax2.set_title("Histogram for the tested distribution")
-	plt.show()
+def set_size(width, fraction=1):
+	""" Set figure dimensions to avoid scaling in LaTeX.
+	This function was developed at https://jwalton.info/ by Jack Walton
 
-	ks_matrix = np.zeros((len(filter_windows),len(filter_windows)))
-	
-	for i in range(len(filter_windows)):
-		for j in range(len(filter_windows)):
-			window_low1 = filter_windows[i]
-			window_low2 = filter_windows[j]
+	Parameters
+	----------
+	width: float
+	    Document textwidth or columnwidth in pts
+	fraction: float, optional
+	    Fraction of the width which you wish the figure to occupy
 
-			dist1 = []
-			dist2 = []
+	Returns
+	-------
+	fig_dim: tuple
+	    Dimensions of figure in inches
+	"""
+	# Width of figure (in pts)
+	fig_width_pt = width * fraction
 
-			for k in range(len(F1)):
-				filter_param = F1[k]
-				test_value = distri1[k]
-			    
-				if window_low1 <= filter_param <= window_low1 + df:
-					dist1.append(test_value)
-					
-			for k in range(len(F2)):
-				filter_param = F2[k]
-				test_value = distri2[k]
-				if window_low2 <= filter_param <= window_low2 + df:
-					dist2.append(test_value)
+	# Convert from pt to inches
+	inches_per_pt = 1 / 72.27
 
+	# Golden ratio to set aesthetic figure height
+	# https://disq.us/p/2940ij3
+	golden_ratio = (5**.5 - 1) / 2
 
-			stat,pvalue = kolmogorov_smirnov(dist1,dist2,nloop=ksloops,plot=False)
-			ks_matrix[i][j] = pvalue
-			
-	return(ks_matrix,filter_windows)
-		   
+	# Figure width in inches
+	fig_width_in = fig_width_pt * inches_per_pt
+	# Figure height in inches
+	fig_height_in = fig_width_in * golden_ratio
+
+	fig_dim = (fig_width_in, fig_height_in)
+
+	return(fig_dim)
 
 def fix_heatmap():
+	"""
+	This function fixes seaborn heat maps. To be placed before plt.show()
+	"""
 	b, t = plt.ylim() # discover the values for bottom and top
 	b += 0.5 # Add 0.5 to the bottom
 	t -= 0.5 # Subtract 0.5 from the top
